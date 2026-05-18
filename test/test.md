@@ -86,4 +86,5 @@ curl -s "$API/jobs/status" | jq
 cd ../frontend
 npm run build
 aws s3 sync dist/ s3://biblionomics-frontend-dev --delete
+aws cloudfront create-invalidation --distribution-id E1SAZ5O39ZGBCO --paths '/*'
 ```
