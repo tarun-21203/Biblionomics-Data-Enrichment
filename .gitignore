@@ -1,5 +1,12 @@
-.aws-sam
-.env
+backend/.aws-sam/*
+backend/*.csv
+backend/*.md
+frontend/.env
+backend/env/*
+frontend/node_modules/*
+frontend/package-lock.json
+frontend/dist-config.json
+frontend/dist/*
 
 # Logs
 logs

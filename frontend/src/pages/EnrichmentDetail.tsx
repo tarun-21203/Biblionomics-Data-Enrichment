@@ -47,6 +47,7 @@ export default function EnrichmentDetail() {
     const [inputUrl, setInputUrl] = useState<string | null>(null);
     const [outputUrl, setOutputUrl] = useState<string | null>(null);
     const [csvRows, setCsvRows] = useState<string[][]>([]);
+    const [outputCsvRows, setOutputCsvRows] = useState<string[][]>([]);
     const [error, setError] = useState("");
     const [loadingCsv, setLoadingCsv] = useState(false);
     const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -79,21 +80,26 @@ export default function EnrichmentDetail() {
         [id]
     );
 
+    const parseCsv = (text: string) =>
+        text.trim().split("\n").map((line) => line.split(",").map((c) => c.trim()));
+
     const fetchCsv = useCallback(async (url: string) => {
         setLoadingCsv(true);
         try {
             const res = await fetch(url);
-            const text = await res.text();
-            const rows = text
-                .trim()
-                .split("\n")
-                .map((line) => line.split(",").map((c) => c.trim()));
-            setCsvRows(rows);
+            setCsvRows(parseCsv(await res.text()));
         } catch {
             // ignore; CSV display is best-effort
         } finally {
             setLoadingCsv(false);
         }
+    }, []);
+
+    const fetchOutputCsv = useCallback(async (url: string) => {
+        try {
+            const res = await fetch(url);
+            setOutputCsvRows(parseCsv(await res.text()));
+        } catch { }
     }, []);
 
     const load = useCallback(async () => {
@@ -104,9 +110,8 @@ export default function EnrichmentDetail() {
             setError("");
 
             const iUrl = await resolveUrls(req);
-            if (iUrl && csvRows.length === 0) {
-                fetchCsv(iUrl);
-            }
+            if (iUrl && csvRows.length === 0) fetchCsv(iUrl);
+            if (req.status === "completed" && outputUrl && outputCsvRows.length === 0) fetchOutputCsv(outputUrl);
 
             if (req.status !== "pending" && req.status !== "processing") {
                 if (pollRef.current) clearInterval(pollRef.current);
@@ -114,7 +119,7 @@ export default function EnrichmentDetail() {
         } catch (e: unknown) {
             setError(e instanceof Error ? e.message : "Failed to load request");
         }
-    }, [id, resolveUrls, fetchCsv, csvRows.length]);
+    }, [id, resolveUrls, fetchCsv, csvRows.length, fetchOutputCsv, outputUrl, outputCsvRows.length]);
 
     useEffect(() => {
         load();
@@ -166,7 +171,7 @@ export default function EnrichmentDetail() {
                 <StatusBadge status={item.status} />
             </Box>
             <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-                {item.requestId} &nbsp;·&nbsp; Created {new Date(item.createdAt).toLocaleString()}
+                {item.requestId} &nbsp;·&nbsp; Created {new Date(item.createdAt * 1000).toLocaleString()}
             </Typography>
 
             {/* Progress */}
@@ -182,11 +187,11 @@ export default function EnrichmentDetail() {
                     </Box>
                     <LinearProgress
                         variant="determinate"
-                        value={item.enrichmentProgress}
+                        value={item.totalIsbns ? (item.processedIsbns / item.totalIsbns) * 100 : 0}
                         sx={{ height: 8, borderRadius: 4 }}
                     />
                     <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: "block" }}>
-                        {item.enrichmentProgress}% complete
+                        {item.totalIsbns ? Math.round((item.processedIsbns / item.totalIsbns) * 100) : 0}% complete
                     </Typography>
                 </Paper>
             )}
@@ -236,7 +241,7 @@ export default function EnrichmentDetail() {
 
             <Divider sx={{ mb: 3 }} />
 
-            {/* Inline CSV */}
+            {/* Input CSV */}
             <Typography variant="subtitle1" fontWeight={600} gutterBottom>
                 Input CSV
                 <Chip label={`${Math.max(0, csvRows.length - 1)} ISBNs`} size="small" sx={{ ml: 1 }} />
@@ -245,32 +250,63 @@ export default function EnrichmentDetail() {
             {loadingCsv ? (
                 <CircularProgress size={24} />
             ) : csvRows.length > 0 ? (
-                <TableContainer component={Paper} variant="outlined" sx={{ maxHeight: 400 }}>
+                <TableContainer component={Paper} variant="outlined" sx={{ maxHeight: 400, mb: 4 }}>
                     <Table stickyHeader size="small">
                         <TableHead>
                             <TableRow>
                                 {csvRows[0].map((col, i) => (
-                                    <TableCell key={i} sx={{ fontWeight: 600 }}>
-                                        {col}
-                                    </TableCell>
+                                    <TableCell key={i} sx={{ fontWeight: 600 }}>{col}</TableCell>
                                 ))}
                             </TableRow>
                         </TableHead>
                         <TableBody>
                             {csvRows.slice(1).map((row, i) => (
                                 <TableRow key={i}>
-                                    {row.map((cell, j) => (
-                                        <TableCell key={j}>{cell}</TableCell>
-                                    ))}
+                                    {row.map((cell, j) => <TableCell key={j}>{cell}</TableCell>)}
                                 </TableRow>
                             ))}
                         </TableBody>
                     </Table>
                 </TableContainer>
             ) : (
-                <Typography color="text.secondary" variant="body2">
+                <Typography color="text.secondary" variant="body2" sx={{ mb: 4 }}>
                     CSV preview unavailable
                 </Typography>
+            )}
+
+            {/* Output CSV */}
+            {item.status === "completed" && (
+                <>
+                    <Divider sx={{ mb: 3 }} />
+                    <Typography variant="subtitle1" fontWeight={600} gutterBottom>
+                        Output CSV
+                        <Chip label={`${Math.max(0, outputCsvRows.length - 1)} rows`} size="small" sx={{ ml: 1 }} />
+                    </Typography>
+                    {outputCsvRows.length > 0 ? (
+                        <TableContainer component={Paper} variant="outlined" sx={{ maxHeight: 400 }}>
+                            <Table stickyHeader size="small">
+                                <TableHead>
+                                    <TableRow>
+                                        {outputCsvRows[0].map((col, i) => (
+                                            <TableCell key={i} sx={{ fontWeight: 600 }}>{col}</TableCell>
+                                        ))}
+                                    </TableRow>
+                                </TableHead>
+                                <TableBody>
+                                    {outputCsvRows.slice(1).map((row, i) => (
+                                        <TableRow key={i}>
+                                            {row.map((cell, j) => <TableCell key={j}>{cell}</TableCell>)}
+                                        </TableRow>
+                                    ))}
+                                </TableBody>
+                            </Table>
+                        </TableContainer>
+                    ) : (
+                        <Typography color="text.secondary" variant="body2">
+                            Output CSV preview unavailable
+                        </Typography>
+                    )}
+                </>
             )}
         </Box>
     );

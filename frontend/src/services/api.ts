@@ -1,16 +1,19 @@
-const API_BASE = import.meta.env.VITE_API_URL as string;
-const API_KEY = import.meta.env.VITE_API_KEY as string;
+import { getConfig } from "./config";
 
 const headers = () => ({
     "Content-Type": "application/json",
-    "x-api-key": API_KEY,
+    "x-api-key": getConfig().apiKey,
 });
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-    const res = await fetch(`${API_BASE}${path}`, {
+    const res = await fetch(`${getConfig().apiUrl}${path}`, {
         ...init,
         headers: { ...headers(), ...init?.headers },
     });
+    const contentType = res.headers.get("content-type") ?? "";
+    if (!contentType.includes("application/json")) {
+        throw new Error(`Invalid API URL — got HTML instead of JSON (HTTP ${res.status}). Check your endpoint settings.`);
+    }
     const data = await res.json();
     if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
     return data as T;
@@ -30,7 +33,6 @@ export interface EnrichmentRequest {
     status: "pending" | "processing" | "completed" | "failed";
     totalIsbns: number;
     processedIsbns: number;
-    enrichmentProgress: number;
     createdAt: number;
     updatedAt: number;
     notes: EnrichmentNote[];

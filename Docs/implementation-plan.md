@@ -243,23 +243,35 @@ Always requires `id`. Called by frontend when presigned URLs are missing or expi
 ## Phase 5: Infrastructure (AWS SAM)
 
 **Template**: `backend/template.yaml`
-
-| Resource | Name |
-|---|---|
-| S3 Input | `biblionomics-enrichment-input-{env}` |
-| S3 Output | `biblionomics-enrichment-output-{env}` |
-| DynamoDB | `enrichment-requests-{env}` |
 | Lambda | `biblionomics-job-starter-{env}` → `job_starter.lambda_handler` |
 | Lambda | `biblionomics-get-status-{env}` → `get_status.lambda_handler` |
 | Lambda | `biblionomics-generate-download-{env}` → `generate_download.lambda_handler` |
-| API GW | `biblionomics-api-{env}` — API key required, OPTIONS exempt |
+| API GW (HTTP v2) | `biblionomics-api-{env}` — Lambda authorizer checks `x-api-key` header |
+| Lambda Authorizer | `biblionomics-authorizer-{env}` → `authorizer.lambda_handler` |
+| S3 Frontend | `biblionomics-frontend-{env}` — private, OAC only |
+| CloudFront OAC | `biblionomics-oac-{env}` |
+| CloudFront Distribution | SPA hosting — HTTPS, 403→index.html for React Router |
 
-
-**Deploy:**
+**Deploy backend + frontend infrastructure:**
 ```bash
-sam build && sam deploy --guided
-aws apigateway get-api-key --api-key <ApiKeyId> --include-value
+cd backend
+sam build && sam deploy
 ```
+
+**Upload frontend after build:**
+```bash
+cd frontend
+./deploy.sh        # builds, syncs to S3, and invalidates CloudFront cache
+./deploy.sh prod   # for prod env
+```
+
+**Get outputs (API URL, CloudFront URL):**
+```bash
+aws cloudformation describe-stacks --stack-name sam-app \
+  --query "Stacks[0].Outputs" --output table
+```
+
+**Auth**: API key is passed via `x-api-key` header. Set it in the browser via the settings modal (gear icon) — stored in localStorage. No `.env` needed on the deployed site.
 
 ---
 
@@ -285,22 +297,81 @@ biblionomics-enrich/
 │   └── vite.config.ts
 ├── backend/
 │   ├── lambdas/
+│   │   ├── authorizer/authorizer.py
 │   │   ├── job_starter/job_starter.py
 │   │   ├── get_status/get_status.py
 │   │   └── generate_download/generate_download.py
+│   ├── complete_job.py        # dev script: mark job completed + upload output CSV
+│   ├── samconfig.toml
 │   └── template.yaml
 └── docs/
-
 ```
+
+---
+
+## Expectation from enrichment request processor
+
+The enrichment processor is an external component (e.g. a Lambda, ECS task, or script) that picks up pending jobs and processes them.
+
+1. **Read the job** — given a `requestId`, fetch the DynamoDB record to get `inputS3Key`, `totalIsbns`, and any other metadata.
+
+2. **Read the input CSV** — read the file from the input S3 bucket using `inputS3Key` (e.g. `{requestId}_input.csv`). Parse each row (skipping the `ISBN` header) to get the list of ISBNs to process.
+
+3. **Process each ISBN** — for each ISBN, perform enrichment logic. After each ISBN is processed (success or error), increment `processedIsbns` by 1 in DynamoDB:
+   ```python
+   table.update_item(
+       Key={"requestId": request_id},
+       UpdateExpression="SET processedIsbns = processedIsbns + :one, updatedAt = :t",
+       ExpressionAttributeValues={":one": 1, ":t": int(time.time())},
+   )
+   ```
+
+4. **Append notes** — use the notes schema below to record warnings or per-ISBN errors. Append to the `notes` list (do not overwrite):
+   ```python
+   table.update_item(
+       Key={"requestId": request_id},
+       UpdateExpression="SET notes = list_append(notes, :n), updatedAt = :t",
+       ExpressionAttributeValues={
+           ":n": [{"timestamp": "2026-03-18T00:00:00Z", "type": "error", "message": "Failed to process due to invalid isbn 9781234567890"}],
+           ":t": int(time.time()),
+       },
+   )
+   ```
+   Note types: `"info"`, `"warning"`, `"error"`.
+
+5. **On completion** — upload the enriched output CSV to the output S3 bucket as `{requestId}_output.csv`, then update DynamoDB:
+   ```python
+   table.update_item(
+       Key={"requestId": request_id},
+       UpdateExpression="SET #s = :s, outputS3Key = :k, updatedAt = :t",
+       ExpressionAttributeNames={"#s": "status"},
+       ExpressionAttributeValues={":s": "completed", ":k": f"{request_id}_output.csv", ":t": int(time.time())},
+   )
+   ```
+
+6. **On failure** — if an ISBN fails, still increment `processedIsbns` (the line was processed, even if unsuccessfully) and append an error note. If the overall job must be aborted, set `status = "failed"`:
+   ```python
+   table.update_item(
+       Key={"requestId": request_id},
+       UpdateExpression="SET #s = :s, updatedAt = :t",
+       ExpressionAttributeNames={"#s": "status"},
+       ExpressionAttributeValues={":s": "failed", ":t": int(time.time())},
+   )
+   ```
 
 ---
 
 ## Decisions
 
-- **Auth**: API key in `x-api-key` header (internal tool, acceptable exposure)
+- **Auth**: API key in `x-api-key` header checked by Lambda authorizer; set via browser settings modal, stored in localStorage
+- **API Gateway**: HTTP API v2 (not REST v1) — native CORS support, no OPTIONS Lambda hacks needed
+- **Frontend hosting**: Private S3 + CloudFront OAC; bucket never public
+- **SPA routing**: CloudFront returns index.html on 403 so React Router handles all paths
 - **Lambda architecture**: Individual files per endpoint, no framework
 - **File upload**: Base64 in request body (~6MB limit, sufficient for ISBN CSVs)
 - **Presigned URL TTL**: 30 minutes, cached in DynamoDB, checked with 60s buffer
 - **Polling**: Dashboard 10s, Detail page 5s while pending
-- **CSV display**: Detail page fetches via presigned URL, renders inline table
+- **Progress**: Computed as `processedIsbns / totalIsbns` in the frontend — not stored in DynamoDB
+- **Timestamps**: Stored as Unix seconds in DynamoDB; multiplied by 1000 in frontend for JS `Date`
+- **CSV display**: Detail page fetches input + output CSV via presigned URLs, renders inline tables
 - **Out of scope**: Enrichment processing Lambda, multiple users, authentication

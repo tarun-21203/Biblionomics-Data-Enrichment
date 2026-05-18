@@ -7,7 +7,7 @@ import boto3
 from botocore.exceptions import ClientError
 import time
 
-class DecimalEncoder(json.JSONEncoder):
+class DecimalSupportedJSONEncoder(json.JSONEncoder):
     def default(self, o):
         if isinstance(o, Decimal):
             return int(o) if o % 1 == 0 else float(o)
@@ -40,7 +40,6 @@ def get_payload(item):
         "status": item.get("status", ""),
         "totalIsbns": item.get("totalIsbns", 0),
         "processedIsbns": item.get("processedIsbns", 0),
-        "enrichmentProgress": item.get("enrichmentProgress", 0),
         "createdAt": item.get("createdAt", ""),
         "updatedAt": item.get("updatedAt", ""),
         "notes": item.get("notes", []),
@@ -102,11 +101,6 @@ def get_all(table, filter_text, status_filter):
 def _response(status_code, body):
     return {
         "statusCode": status_code,
-        "headers": {
-            "Content-Type": "application/json",
-            "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Headers": "Content-Type",
-            "Access-Control-Allow-Methods": "OPTIONS,GET",
-        },
-        "body": json.dumps(body, cls=DecimalEncoder),
+        "headers": {"Content-Type": "application/json"},
+        "body": json.dumps(body, cls=DecimalSupportedJSONEncoder),
     }

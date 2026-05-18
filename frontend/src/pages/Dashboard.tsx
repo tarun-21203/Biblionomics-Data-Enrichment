@@ -144,16 +144,18 @@ export default function Dashboard() {
                                         <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
                                             <LinearProgress
                                                 variant="determinate"
-                                                value={r.enrichmentProgress}
+                                                value={r.totalIsbns ? (r.processedIsbns / r.totalIsbns) * 100 : 0}
                                                 sx={{ flex: 1 }}
                                             />
-                                            <Typography variant="caption">{r.enrichmentProgress}%</Typography>
+                                            <Typography variant="caption">
+                                                {r.totalIsbns ? Math.round((r.processedIsbns / r.totalIsbns) * 100) : 0}%
+                                            </Typography>
                                         </Box>
                                     </TableCell>
                                     <TableCell align="right">{r.totalIsbns.toLocaleString()}</TableCell>
                                     <TableCell>
                                         <Typography variant="body2">
-                                            {new Date(r.createdAt).toLocaleString()}
+                                            {new Date(r.createdAt * 1000).toLocaleString()}
                                         </Typography>
                                     </TableCell>
                                 </TableRow>

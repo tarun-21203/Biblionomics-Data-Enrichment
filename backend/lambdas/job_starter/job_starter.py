@@ -69,7 +69,6 @@ def lambda_handler(event, context):
         "outputS3Key": None,
         "totalIsbns": total_isbns,
         "processedIsbns": 0,
-        "enrichmentProgress": 0,
         "inputPresignedUrl": None,
         "inputPresignedUrlExpiry": None,
         "outputPresignedUrl": None,
@@ -92,11 +91,6 @@ def lambda_handler(event, context):
 def _response(status_code, body):
     return {
         "statusCode": status_code,
-        "headers": {
-            "Content-Type": "application/json",
-            "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Headers": "Content-Type",
-            "Access-Control-Allow-Methods": "OPTIONS,POST",
-        },
+        "headers": {"Content-Type": "application/json"},
         "body": json.dumps(body),
     }

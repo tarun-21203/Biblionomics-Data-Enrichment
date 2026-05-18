@@ -5,7 +5,7 @@ from decimal import Decimal
 import boto3
 from botocore.exceptions import ClientError
 
-class DecimalEncoder(json.JSONEncoder):
+class DecimalSupportedJSONEncoder(json.JSONEncoder):
     def default(self, o):
         if isinstance(o, Decimal):
             return int(o) if o % 1 == 0 else float(o)
@@ -79,11 +79,6 @@ def lambda_handler(event, context):
 def _response(status_code, body):
     return {
         "statusCode": status_code,
-        "headers": {
-            "Content-Type": "application/json",
-            "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Headers": "Content-Type",
-            "Access-Control-Allow-Methods": "OPTIONS,GET",
-        },
-        "body": json.dumps(body, cls=DecimalEncoder),
+        "headers": {"Content-Type": "application/json"},
+        "body": json.dumps(body, cls=DecimalSupportedJSONEncoder),
     }
