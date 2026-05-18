@@ -93,9 +93,14 @@ Resources:
                 Resource: !GetAtt EnrichmentRequestsTable.Arn
               - Effect: Allow
                 Action:
+                  - dynamodb:DeleteItem
+                Resource: !GetAtt EnrichmentRequestsTable.Arn
+              - Effect: Allow
+                Action:
                   - s3:PutObject
                   - s3:GetObject
                   - s3:HeadObject
+                  - s3:DeleteObject
                 Resource:
                   - !Sub "arn:aws:s3:::biblionomics-enrichment-input-${Env}/*"
                   - !Sub "arn:aws:s3:::biblionomics-enrichment-output-${Env}/*"
@@ -145,6 +150,36 @@ Resources:
             Path: /jobs/status
             Method: GET
 
+  JobRedoFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "biblionomics-job-redo-${Env}"
+      CodeUri: lambdas/job_redo/
+      Handler: job_redo.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Events:
+        PostJobsRedo:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref BiblionomicsApi
+            Path: /jobs/redo
+            Method: POST
+
+  JobDeleteFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "biblionomics-job-delete-${Env}"
+      CodeUri: lambdas/job_delete/
+      Handler: job_delete.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Events:
+        DeleteJob:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref BiblionomicsApi
+            Path: /jobs/delete
+            Method: DELETE
+
   GenerateDownloadFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -160,7 +195,7 @@ Resources:
             Path: /jobs/generate-download
             Method: GET
 
-  # ── API Gateway (HTTP API v2) ───────────────────────────────────────────────────────────────
+  # ── API Gateway (HTTP API v2) ─────────────────────────────────────────────────
 
   BiblionomicsApi:
     Type: AWS::Serverless::HttpApi
@@ -172,6 +207,7 @@ Resources:
         AllowMethods:
           - GET
           - POST
+          - DELETE
           - OPTIONS
         AllowHeaders:
           - Content-Type

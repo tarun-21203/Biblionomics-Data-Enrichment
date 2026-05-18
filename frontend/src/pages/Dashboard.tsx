@@ -18,10 +18,11 @@ import Typography from "@mui/material/Typography";
 import LinearProgress from "@mui/material/LinearProgress";
 import AddIcon from "@mui/icons-material/Add";
 import RefreshIcon from "@mui/icons-material/Refresh";
+import DeleteIcon from "@mui/icons-material/Delete";
 import IconButton from "@mui/material/IconButton";
 import Tooltip from "@mui/material/Tooltip";
 import StatusBadge from "../components/StatusBadge";
-import { getStatusAll, EnrichmentRequest } from "../services/api";
+import { getStatusAll, jobDelete, EnrichmentRequest } from "../services/api";
 
 const POLL_INTERVAL = 10_000;
 
@@ -44,6 +45,20 @@ export default function Dashboard() {
             setLoading(false);
         }
     }, [filter, statusFilter]);
+
+    const handleDelete = useCallback(
+        async (e: React.MouseEvent, requestId: string) => {
+            e.stopPropagation();
+            if (!window.confirm("Delete this enrichment request? This cannot be undone.")) return;
+            try {
+                await jobDelete(requestId);
+                await load();
+            } catch (err: unknown) {
+                setError(err instanceof Error ? err.message : "Failed to delete request");
+            }
+        },
+        [load]
+    );
 
     useEffect(() => {
         load();
@@ -114,12 +129,13 @@ export default function Dashboard() {
                             <TableCell>Progress</TableCell>
                             <TableCell align="right">ISBNs</TableCell>
                             <TableCell>Created</TableCell>
+                            <TableCell />
                         </TableRow>
                     </TableHead>
                     <TableBody>
                         {requests.length === 0 && !loading ? (
                             <TableRow>
-                                <TableCell colSpan={5} align="center" sx={{ py: 6, color: "text.secondary" }}>
+                                <TableCell colSpan={6} align="center" sx={{ py: 6, color: "text.secondary" }}>
                                     No requests found
                                 </TableCell>
                             </TableRow>
@@ -157,6 +173,17 @@ export default function Dashboard() {
                                         <Typography variant="body2">
                                             {new Date(r.createdAt * 1000).toLocaleString()}
                                         </Typography>
+                                    </TableCell>
+                                    <TableCell align="right" sx={{ pr: 1 }}>
+                                        <Tooltip title="Delete">
+                                            <IconButton
+                                                size="small"
+                                                color="error"
+                                                onClick={(e) => handleDelete(e, r.requestId)}
+                                            >
+                                                <DeleteIcon fontSize="small" />
+                                            </IconButton>
+                                        </Tooltip>
                                     </TableCell>
                                 </TableRow>
                             ))

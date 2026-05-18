@@ -98,3 +98,18 @@ export function getStatusSingle(id: string): Promise<EnrichmentRequest> {
 export function generateDownload(id: string): Promise<GenerateDownloadResponse> {
     return request(`/jobs/generate-download?id=${encodeURIComponent(id)}`);
 }
+
+export function jobRedo(
+    requestId: string
+): Promise<{ requestId: string; status: string; message: string }> {
+    return request("/jobs/redo", {
+        method: "POST",
+        body: JSON.stringify({ requestId }),
+    });
+}
+
+export function jobDelete(requestId: string): Promise<{ message: string }> {
+    return request(`/jobs/delete?id=${encodeURIComponent(requestId)}`, {
+        method: "DELETE",
+    });
+}

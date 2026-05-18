@@ -17,10 +17,14 @@ import Alert from "@mui/material/Alert";
 import CircularProgress from "@mui/material/CircularProgress";
 import ArrowBackIcon from "@mui/icons-material/ArrowBack";
 import DownloadIcon from "@mui/icons-material/Download";
+import ReplayIcon from "@mui/icons-material/Replay";
+import DeleteIcon from "@mui/icons-material/Delete";
 import StatusBadge from "../components/StatusBadge";
 import {
     getStatusSingle,
     generateDownload,
+    jobRedo,
+    jobDelete,
     EnrichmentRequest,
     EnrichmentNote,
 } from "../services/api";
@@ -50,6 +54,7 @@ export default function EnrichmentDetail() {
     const [outputCsvRows, setOutputCsvRows] = useState<string[][]>([]);
     const [error, setError] = useState("");
     const [loadingCsv, setLoadingCsv] = useState(false);
+    const [actionError, setActionError] = useState("");
     const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
     const resolveUrls = useCallback(
@@ -129,6 +134,29 @@ export default function EnrichmentDetail() {
         };
     }, [load]);
 
+    async function handleRedo() {
+        if (!id) return;
+        setActionError("");
+        try {
+            await jobRedo(id);
+            await load();
+        } catch (e: unknown) {
+            setActionError(e instanceof Error ? e.message : "Failed to redo job");
+        }
+    }
+
+    async function handleDelete() {
+        if (!id) return;
+        if (!window.confirm("Delete this enrichment request? This cannot be undone.")) return;
+        setActionError("");
+        try {
+            await jobDelete(id);
+            navigate("/");
+        } catch (e: unknown) {
+            setActionError(e instanceof Error ? e.message : "Failed to delete request");
+        }
+    }
+
     function handleDownload(url: string, filename: string) {
         const a = document.createElement("a");
         a.href = url;
@@ -159,9 +187,36 @@ export default function EnrichmentDetail() {
 
     return (
         <Box>
-            <Button startIcon={<ArrowBackIcon />} onClick={() => navigate("/")} sx={{ mb: 3 }}>
-                Back to Dashboard
-            </Button>
+            <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 3 }}>
+                <Button startIcon={<ArrowBackIcon />} onClick={() => navigate("/")}>
+                    Back to Dashboard
+                </Button>
+                <Box sx={{ display: "flex", gap: 1 }}>
+                    {item.status !== "pending" && (
+                        <Button
+                            variant="outlined"
+                            startIcon={<ReplayIcon />}
+                            onClick={handleRedo}
+                        >
+                            Redo
+                        </Button>
+                    )}
+                    <Button
+                        variant="outlined"
+                        color="error"
+                        startIcon={<DeleteIcon />}
+                        onClick={handleDelete}
+                    >
+                        Delete
+                    </Button>
+                </Box>
+            </Box>
+
+            {actionError && (
+                <Alert severity="error" sx={{ mb: 2 }}>
+                    {actionError}
+                </Alert>
+            )}
 
             {/* Header */}
             <Box sx={{ display: "flex", alignItems: "center", gap: 2, mb: 1 }}>
@@ -263,6 +318,7 @@ export default function EnrichmentDetail() {
                             {csvRows.slice(1).map((row, i) => (
                                 <TableRow key={i}>
                                     {row.map((cell, j) => <TableCell key={j}>{cell}</TableCell>)}
+
                                 </TableRow>
                             ))}
                         </TableBody>

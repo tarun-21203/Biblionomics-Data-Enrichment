@@ -161,7 +161,49 @@ All APIs require header: `x-api-key: <key>`. OPTIONS routes are exempt (CORS pre
 
 ---
 
-### API 3: `GET /jobs/generate-download?id={requestId}`
+### API 3: `POST /jobs/redo`
+**Lambda file**: `lambdas/job_redo/job_redo.py`
+
+**Request body:**
+```json
+{ "requestId": "uuid-123" }
+```
+
+**Response 200:**
+```json
+{ "requestId": "uuid-123", "status": "pending", "message": "Job reset to pending" }
+```
+
+**Response 400:** `{ "error": "Request is already in pending state" }` or `{ "error": "requestId is required" }`
+**Response 404:** `{ "error": "Request not found" }`
+
+**Lambda Logic:**
+1. Fetch DynamoDB record by requestId
+2. Reject if status is already `pending`
+3. Update status to `pending`, set `updatedAt` to now
+
+---
+
+### API 4: `DELETE /jobs/delete?id={requestId}`
+**Lambda file**: `lambdas/job_delete/job_delete.py`
+
+**Response 200:**
+```json
+{ "message": "Request deleted successfully" }
+```
+
+**Response 400:** `{ "error": "id query parameter is required" }`
+**Response 404:** `{ "error": "Request not found" }`
+
+**Lambda Logic:**
+1. Fetch DynamoDB record by requestId
+2. Delete `inputS3Key` from input bucket (ignore errors)
+3. Delete `outputS3Key` from output bucket if set (ignore errors)
+4. Delete DynamoDB record
+
+---
+
+### API 5: `GET /jobs/generate-download?id={requestId}`
 **Lambda file**: `lambdas/generate_download/generate_download.py`
 
 Always requires `id`. Called by frontend when presigned URLs are missing or expired.
@@ -200,11 +242,12 @@ Always requires `id`. Called by frontend when presigned URLs are missing or expi
 
 ### Page 1: Dashboard (`/`)
 - List all enrichment requests in a table/card format
-- Columns: identifier, status badge, progress %, totalIsbns, createdAt
+- Columns: identifier, status badge, progress %, totalIsbns, createdAt, actions
 - Text search input (filters by identifier/requestId)
 - Dropdown filter by status (All / Pending / Completed / Failed)
 - "New Enrichment" button → `/submit`
 - Click row → `/enrichment/{id}`
+- Delete button (red icon) on each row — confirms before deleting, reloads list
 - Poll every 10 seconds (or manual refresh button)
 
 **API calls:**
@@ -215,8 +258,6 @@ Always requires `id`. Called by frontend when presigned URLs are missing or expi
 ### Page 2: Submit (`/submit`)
 - Optional identifier text input
 - CSV file picker (`accept=".csv"`)
-
-
 - Submit button (disabled until file selected)
 - On submit: encode file as base64, POST to `/jobs/begin`
 - Success: show confirmation + "View Status" button → `/enrichment/{requestId}`
@@ -230,11 +271,11 @@ Always requires `id`. Called by frontend when presigned URLs are missing or expi
 - Progress text: `{processedIsbns} / {totalIsbns} ISBNs`
 - Notes panel (warnings/errors/info with timestamps)
 - Inline CSV table (fetched via input presigned URL)
-
-
 - Download buttons:
   - "Download Input CSV" (always)
   - "Download Output CSV" (only if completed)
+- **Redo button** (shown when status is not pending) — resets status to `pending` via `POST /jobs/redo`
+- **Delete button** (always visible) — deletes request and navigates back to dashboard
 - Back button to Dashboard
 - Poll every 5s while status=pending
 
@@ -243,9 +284,17 @@ Always requires `id`. Called by frontend when presigned URLs are missing or expi
 ## Phase 5: Infrastructure (AWS SAM)
 
 **Template**: `backend/template.yaml`
+
+| Resource | Name |
+|---|---|
+| S3 Input | `biblionomics-enrichment-input-{env}` |
+| S3 Output | `biblionomics-enrichment-output-{env}` |
+| DynamoDB | `enrichment-requests-{env}` |
 | Lambda | `biblionomics-job-starter-{env}` → `job_starter.lambda_handler` |
 | Lambda | `biblionomics-get-status-{env}` → `get_status.lambda_handler` |
 | Lambda | `biblionomics-generate-download-{env}` → `generate_download.lambda_handler` |
+| Lambda | `biblionomics-job-redo-{env}` → `job_redo.lambda_handler` |
+| Lambda | `biblionomics-job-delete-{env}` → `job_delete.lambda_handler` |
 | API GW (HTTP v2) | `biblionomics-api-{env}` — Lambda authorizer checks `x-api-key` header |
 | Lambda Authorizer | `biblionomics-authorizer-{env}` → `authorizer.lambda_handler` |
 | S3 Frontend | `biblionomics-frontend-{env}` — private, OAC only |
@@ -339,7 +388,7 @@ The enrichment processor is an external component (e.g. a Lambda, ECS task, or s
    ```
    Note types: `"info"`, `"warning"`, `"error"`.
 
-5. **On completion** — upload the enriched output CSV to the output S3 bucket as `{requestId}_output.csv`, then update DynamoDB:
+5. **On completion** — upload the enriched output CSV to the output S3 bucket as `{requestId}_output.csv`, overwriting any existing file with the same key (this handles redo scenarios where a previous output may already exist). Then update DynamoDB:
    ```python
    table.update_item(
        Key={"requestId": request_id},
