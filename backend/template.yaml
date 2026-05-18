@@ -1,0 +1,203 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: BIBLIOnomics Enrichment Backend
+
+Globals:
+  Function:
+    Runtime: python3.12
+    Timeout: 30
+    MemorySize: 256
+    Environment:
+      Variables:
+        DYNAMODB_TABLE: !Ref EnrichmentRequestsTable
+        INPUT_BUCKET: !Ref InputBucket
+        OUTPUT_BUCKET: !Ref OutputBucket
+
+Parameters:
+  Env:
+    Type: String
+    Default: dev
+    AllowedValues: [dev, prod]
+
+Resources:
+
+  # ── S3 Buckets ──────────────────────────────────────────────────────────────
+
+  InputBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "biblionomics-enrichment-input-${Env}"
+      CorsConfiguration:
+        CorsRules:
+          - AllowedOrigins: ["*"]
+            AllowedMethods: [GET, PUT]
+            AllowedHeaders: ["*"]
+            MaxAge: 3000
+
+  OutputBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "biblionomics-enrichment-output-${Env}"
+      CorsConfiguration:
+        CorsRules:
+          - AllowedOrigins: ["*"]
+            AllowedMethods: [GET]
+            AllowedHeaders: ["*"]
+            MaxAge: 3000
+
+  # ── DynamoDB ─────────────────────────────────────────────────────────────────
+
+  EnrichmentRequestsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "enrichment-requests-${Env}"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: requestId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: requestId
+          KeyType: HASH
+
+  # ── IAM Role (shared) ────────────────────────────────────────────────────────
+
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "biblionomics-lambda-role-${Env}"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: BiblionomicsAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:Scan
+                  - dynamodb:Query
+                Resource: !GetAtt EnrichmentRequestsTable.Arn
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                  - s3:HeadObject
+                Resource:
+                  - !Sub "arn:aws:s3:::biblionomics-enrichment-input-${Env}/*"
+                  - !Sub "arn:aws:s3:::biblionomics-enrichment-output-${Env}/*"
+
+  # ── Lambda Functions ─────────────────────────────────────────────────────────
+
+  JobStarterFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "biblionomics-job-starter-${Env}"
+      CodeUri: lambdas/job_starter/
+      Handler: job_starter.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Events:
+        PostJobsBegin:
+          Type: Api
+          Properties:
+            RestApiId: !Ref BiblionomicsApi
+            Path: /jobs/begin
+            Method: POST
+        OptionsJobsBegin:
+          Type: Api
+          Properties:
+            RestApiId: !Ref BiblionomicsApi
+            Path: /jobs/begin
+            Method: OPTIONS
+            Auth:
+              ApiKeyRequired: false
+
+  GetStatusFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "biblionomics-get-status-${Env}"
+      CodeUri: lambdas/get_status/
+      Handler: get_status.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Events:
+        GetJobsStatus:
+          Type: Api
+          Properties:
+            RestApiId: !Ref BiblionomicsApi
+            Path: /jobs/status
+            Method: GET
+        OptionsJobsStatus:
+          Type: Api
+          Properties:
+            RestApiId: !Ref BiblionomicsApi
+            Path: /jobs/status
+            Method: OPTIONS
+            Auth:
+              ApiKeyRequired: false
+
+  GenerateDownloadFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "biblionomics-generate-download-${Env}"
+      CodeUri: lambdas/generate_download/
+      Handler: generate_download.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Events:
+        GetGenerateDownload:
+          Type: Api
+          Properties:
+            RestApiId: !Ref BiblionomicsApi
+            Path: /jobs/generate-download
+            Method: GET
+        OptionsGenerateDownload:
+          Type: Api
+          Properties:
+            RestApiId: !Ref BiblionomicsApi
+            Path: /jobs/generate-download
+            Method: OPTIONS
+            Auth:
+              ApiKeyRequired: false
+
+  # ── API Gateway ───────────────────────────────────────────────────────────────
+
+  BiblionomicsApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      Name: !Sub "biblionomics-api-${Env}"
+      StageName: !Ref Env
+      Auth:
+        ApiKeyRequired: true
+        UsagePlan:
+          CreateUsagePlan: PER_API
+          UsagePlanName: !Sub "biblionomics-usage-plan-${Env}"
+      Cors:
+        AllowMethods: "'GET,POST,OPTIONS'"
+        AllowHeaders: "'Content-Type,x-api-key'"
+        AllowOrigin: "'*'"
+
+Outputs:
+  ApiUrl:
+    Description: API Gateway base URL
+    Value: !Sub "https://${BiblionomicsApi}.execute-api.${AWS::Region}.amazonaws.com/${Env}"
+
+  InputBucketName:
+    Value: !Ref InputBucket
+
+  OutputBucketName:
+    Value: !Ref OutputBucket
+
+  DynamoDBTableName:
+    Value: !Ref EnrichmentRequestsTable
+
+  ApiKeyId:
+    Description: "API Key ID (retrieve value with: aws apigateway get-api-key --api-key <id> --include-value)"
+    Value: !Ref BiblionomicsApiApiKey
