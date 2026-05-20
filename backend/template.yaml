@@ -104,6 +104,11 @@ Resources:
                 Resource:
                   - !Sub "arn:aws:s3:::biblionomics-enrichment-input-${Env}/*"
                   - !Sub "arn:aws:s3:::biblionomics-enrichment-output-${Env}/*"
+              - Effect: Allow
+                Action:
+                  - comprehend:DetectEntities
+                  - comprehend:DetectKeyPhrases
+                Resource: "*"
 
   # ── Lambda Authorizer ────────────────────────────────────────────────────────
 
@@ -194,6 +199,15 @@ Resources:
             ApiId: !Ref BiblionomicsApi
             Path: /jobs/generate-download
             Method: GET
+
+  EnrichOneBookFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "biblionomics-enrich-one-book-${Env}"
+      CodeUri: lambdas/enrich_one_book/
+      Handler: enrich_one_book.lambda_handler
+      Timeout: 20 # A bit longer to account for multiple API calls
+      Role: !GetAtt LambdaExecutionRole.Arn
 
   ResultsAggregatorFunction:
     Type: AWS::Serverless::Function
