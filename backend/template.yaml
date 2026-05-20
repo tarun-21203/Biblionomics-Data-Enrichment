@@ -195,6 +195,23 @@ Resources:
             Path: /jobs/generate-download
             Method: GET
 
+  ResultsAggregatorFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "biblionomics-results-aggregator-${Env}"
+      CodeUri: lambdas/results_aggregator/
+      Handler: results_aggregator.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 30
+
+  JobStatusUpdaterFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "biblionomics-job-status-updater-${Env}"
+      CodeUri: lambdas/job_status_updater/
+      Handler: job_status_updater.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+
   # ── API Gateway (HTTP API v2) ─────────────────────────────────────────────────
 
   BiblionomicsApi:
@@ -224,6 +241,70 @@ Resources:
                 - x-api-key
             AuthorizerPayloadFormatVersion: "2.0"
             EnableSimpleResponses: true
+
+# ── Orchestration Layer (Step Functions) ────────────────────────────────────
+
+  EnrichmentStateMachineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "biblionomics-states-role-${Env}"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: states.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: InvokeLambdas
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource: 
+                  - !GetAtt EnrichOneBookFunction.Arn
+                  - !GetAtt ResultsAggregatorFunction.Arn
+                  - !GetAtt JobStatusUpdaterFunction.Arn
+
+  EnrichmentStateMachine:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Name: !Sub "biblionomics-enrichment-pipeline-${Env}"
+      Role: !GetAtt EnrichmentStateMachineRole.Arn
+      Definition:
+        StartAt: ProcessBooks
+        States:
+          ProcessBooks:
+            Type: Map
+            ItemsPath: "$.isbns"
+            ItemSelector:
+              "isbn.$": "$$.Map.Item.Value"
+              "jobId.$": "$.jobId"
+            MaxConcurrency: 50
+            ResultPath: "$.enrichmentResults"
+            Next: AggregateResults
+            Iterator:
+              StartAt: EnrichBook
+              States:
+                EnrichBook:
+                  Type: Task
+                  Resource: !GetAtt EnrichOneBookFunction.Arn
+                  Retry:
+                    - ErrorEquals: ["States.TaskFailed"]
+                      IntervalSeconds: 2
+                      MaxAttempts: 3
+                      BackoffRate: 2.0
+                  End: true
+          AggregateResults:
+            Type: Task
+            Resource: !GetAtt ResultsAggregatorFunction.Arn
+            ResultPath: "$.aggregationResult"
+            Next: UpdateJobStatus
+          UpdateJobStatus:
+            Type: Task
+            Resource: !GetAtt JobStatusUpdaterFunction.Arn
+            End: true
 
   # ── Frontend Hosting ──────────────────────────────────────────────────────────
 
@@ -299,6 +380,8 @@ Resources:
               - Effect: Allow
                 Action: lambda:InvokeFunction
                 Resource: !GetAtt AuthorizerFunction.Arn
+
+
 
 Outputs:
   ApiUrl:
