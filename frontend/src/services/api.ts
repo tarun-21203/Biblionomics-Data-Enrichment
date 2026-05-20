@@ -12,7 +12,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     });
     const contentType = res.headers.get("content-type") ?? "";
     if (!contentType.includes("application/json")) {
-        throw new Error(`Invalid API URL — got HTML instead of JSON (HTTP ${res.status}). Check your endpoint settings.`);
+        throw new Error(
+            `Invalid API URL — got HTML instead of JSON (HTTP ${res.status}). Check your endpoint settings.`,
+        );
     }
     const data = await res.json();
     if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
@@ -55,7 +57,7 @@ export interface GenerateDownloadResponse {
 
 export function postJobBegin(
     identifier: string,
-    csvFile: File
+    csvFile: File,
 ): Promise<{ requestId: string; status: string; message: string }> {
     return new Promise((resolve, reject) => {
         const reader = new FileReader();
@@ -82,7 +84,7 @@ export function postJobBegin(
 
 export function getStatusAll(
     filter?: string,
-    status?: string
+    status?: string,
 ): Promise<{ requests: EnrichmentRequest[] }> {
     const params = new URLSearchParams();
     if (filter) params.set("filter", filter);
@@ -95,12 +97,14 @@ export function getStatusSingle(id: string): Promise<EnrichmentRequest> {
     return request(`/jobs/status?id=${encodeURIComponent(id)}`);
 }
 
-export function generateDownload(id: string): Promise<GenerateDownloadResponse> {
+export function generateDownload(
+    id: string,
+): Promise<GenerateDownloadResponse> {
     return request(`/jobs/generate-download?id=${encodeURIComponent(id)}`);
 }
 
 export function jobRedo(
-    requestId: string
+    requestId: string,
 ): Promise<{ requestId: string; status: string; message: string }> {
     return request("/jobs/redo", {
         method: "POST",

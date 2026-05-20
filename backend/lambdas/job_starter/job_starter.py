@@ -9,9 +9,11 @@ import boto3
 
 dynamodb = boto3.resource("dynamodb")
 s3 = boto3.client("s3")
+stepfunctions = boto3.client("stepfunctions")
 
 TABLE_NAME = os.environ["DYNAMODB_TABLE"]
 INPUT_BUCKET = os.environ["INPUT_BUCKET"]
+STATE_MACHINE_ARN = os.environ.get("STATE_MACHINE_ARN")
 
 
 def lambda_handler(event, context):
@@ -37,8 +39,11 @@ def lambda_handler(event, context):
     try:
         reader = csv.reader(io.StringIO(csv_text))
         rows = [r for r in reader if any(cell.strip() for cell in r)]
+        header = rows[0] if rows else []
         rows = rows[1:]
-        total_isbns = len(rows)
+        # Assume ISBN is in the first column
+        isbns_list = [r[0].strip() for r in rows if r and r[0].strip()]
+        total_isbns = len(isbns_list)
     except Exception:
         return _response(400, {"error": "Could not parse CSV"})
 
@@ -62,7 +67,7 @@ def lambda_handler(event, context):
     item = {
         "requestId": request_id,
         "identifier": identifier or request_id,
-        "status": "pending",
+        "status": "processing",
         "createdAt": now,
         "updatedAt": now,
         "inputS3Key": s3_key,
@@ -81,10 +86,23 @@ def lambda_handler(event, context):
     except Exception as e:
         return _response(500, {"error": f"Failed to create record: {str(e)}"})
 
+    # Start Step Functions execution
+    try:
+        stepfunctions.start_execution(
+            stateMachineArn=STATE_MACHINE_ARN,
+            name=request_id,
+            input=json.dumps({
+                "jobId": request_id,
+                "isbns": isbns_list
+            })
+        )
+    except Exception as e:
+        return _response(500, {"error": f"Failed to start Step Functions execution: {str(e)}"})
+
     return _response(200, {
         "requestId": request_id,
-        "status": "pending",
-        "message": "Enrichment request submitted successfully",
+    "status": "processing",
+    "message": "Enrichment request submitted and Step Functions started successfully",
     })
 
 
