@@ -117,3 +117,10 @@ export function jobDelete(requestId: string): Promise<{ message: string }> {
         method: "DELETE",
     });
 }
+
+export function setBiblioToken(token: string): Promise<{ message: string }> {
+    return request("/set-biblionomics-token", {
+        method: "POST",
+        body: JSON.stringify({ token }),
+    });
+}

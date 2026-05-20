@@ -3,6 +3,7 @@ const STORAGE_KEY = "biblionomics_config";
 export interface AppConfig {
     apiUrl: string;
     apiKey: string;
+    biblioToken: string;
 }
 
 export function getConfig(): AppConfig {
@@ -13,6 +14,7 @@ export function getConfig(): AppConfig {
     return {
         apiUrl: import.meta.env.VITE_API_URL ?? "",
         apiKey: import.meta.env.VITE_API_KEY ?? "",
+        biblioToken: "",
     };
 }
 

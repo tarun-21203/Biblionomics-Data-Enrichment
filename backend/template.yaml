@@ -113,6 +113,11 @@ Resources:
                   - comprehend:DetectEntities
                   - comprehend:DetectKeyPhrases
                 Resource: "*"
+              - Effect: Allow
+                Action:
+                  - lambda:GetFunctionConfiguration
+                  - lambda:UpdateFunctionConfiguration
+                Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:biblionomics-enrich-one-book-${Env}"
 
   # ── Lambda Authorizer ────────────────────────────────────────────────────────
 
@@ -203,6 +208,24 @@ Resources:
             ApiId: !Ref BiblionomicsApi
             Path: /jobs/generate-download
             Method: GET
+
+  SetBiblioTokenFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "biblionomics-set-biblio-token-${Env}"
+      CodeUri: lambdas/set_biblionomics_token/
+      Handler: set_biblionomics_token.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Environment:
+        Variables:
+          ENRICH_FUNCTION_NAME: !Sub "biblionomics-enrich-one-book-${Env}"
+      Events:
+        PostSetBiblioToken:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref BiblionomicsApi
+            Path: /set-biblionomics-token
+            Method: POST
 
   EnrichOneBookFunction:
     Type: AWS::Serverless::Function
