@@ -22,6 +22,10 @@ Parameters:
     Type: String
     NoEcho: true
     Description: API key value that clients must send in the x-api-key header
+  BiblioShareToken:
+    Type: String
+    NoEcho: true
+    Description: "Token for the BiblioShare API"
 
 Resources:
 
@@ -208,6 +212,9 @@ Resources:
       Handler: enrich_one_book.lambda_handler
       Timeout: 20 # A bit longer to account for multiple API calls
       Role: !GetAtt LambdaExecutionRole.Arn
+      Environment:
+        Variables:
+          BIBLIOSHARE_TOKEN: !Ref BiblioShareToken
 
   ResultsAggregatorFunction:
     Type: AWS::Serverless::Function
