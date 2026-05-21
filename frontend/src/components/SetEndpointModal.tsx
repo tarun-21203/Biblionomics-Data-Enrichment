@@ -9,7 +9,8 @@ import Stack from "@mui/material/Stack";
 import Alert from "@mui/material/Alert";
 import CircularProgress from "@mui/material/CircularProgress";
 import { getConfig, saveConfig } from "../services/config";
-import { setBiblioToken } from "../services/api";
+import { getBiblioToken, setBiblioToken } from "../services/api";
+import InputAdornment from "@mui/material/InputAdornment";
 
 interface Props {
     open: boolean;
@@ -22,18 +23,33 @@ export default function SetEndpointModal({ open, onClose }: Props) {
     const [apiKey, setApiKey] = useState(current.apiKey);
     const [biblioToken, setBiblioTokenState] = useState(current.biblioToken);
     const [saving, setSaving] = useState(false);
+    const [fetching, setFetching] = useState(false);
     const [error, setError] = useState<string | null>(null);
+
+    async function handleGetToken() {
+        setFetching(true);
+        setError(null);
+        try {
+            const res = await getBiblioToken();
+            setBiblioTokenState(res.token);
+        } catch (e) {
+            setError("Unable to fetch token: " + (e instanceof Error ? e.message : String(e)));
+        }
+        setFetching(false);
+    }
 
     async function handleSave() {
         setSaving(true);
         setError(null);
         saveConfig({ apiUrl: apiUrl.trim(), apiKey: apiKey.trim(), biblioToken: biblioToken.trim() });
-        try {
-            await setBiblioToken(biblioToken.trim());
-        } catch (e) {
-            setError("Unable to save the token: " + (e instanceof Error ? e.message : String(e)));
-            setSaving(false);
-            return;
+        if (biblioToken.trim()) {
+            try {
+                await setBiblioToken(biblioToken.trim());
+            } catch (e) {
+                setError("Unable to save the token: " + (e instanceof Error ? e.message : String(e)));
+                setSaving(false);
+                return;
+            }
         }
         onClose();
         window.location.reload();
@@ -56,15 +72,27 @@ export default function SetEndpointModal({ open, onClose }: Props) {
                         label="API Key"
                         value={apiKey}
                         onChange={(e) => setApiKey(e.target.value)}
-                        type="password"
                         fullWidth
                     />
                     <TextField
                         label="Biblionomics Token"
                         value={biblioToken}
                         onChange={(e) => setBiblioTokenState(e.target.value)}
-                        type="password"
                         fullWidth
+                        helperText="Leave blank to keep the existing token unchanged."
+                        InputProps={{
+                            endAdornment: (
+                                <InputAdornment position="end">
+                                    <Button
+                                        size="small"
+                                        onClick={handleGetToken}
+                                        disabled={fetching || saving}
+                                    >
+                                        {fetching ? <CircularProgress size={14} /> : "Get Token on Cloud"}
+                                    </Button>
+                                </InputAdornment>
+                            ),
+                        }}
                     />
                 </Stack>
             </DialogContent>

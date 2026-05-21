@@ -118,8 +118,12 @@ export function jobDelete(requestId: string): Promise<{ message: string }> {
     });
 }
 
+export function getBiblioToken(): Promise<{ token: string }> {
+    return request("/biblionomics-token");
+}
+
 export function setBiblioToken(token: string): Promise<{ message: string }> {
-    return request("/set-biblionomics-token", {
+    return request("/biblionomics-token", {
         method: "POST",
         body: JSON.stringify({ token }),
     });

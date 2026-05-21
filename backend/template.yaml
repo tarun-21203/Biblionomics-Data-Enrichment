@@ -206,25 +206,32 @@ Resources:
           Type: HttpApi
           Properties:
             ApiId: !Ref BiblionomicsApi
+
             Path: /jobs/generate-download
             Method: GET
 
-  SetBiblioTokenFunction:
+  BiblioTokenFunction:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: !Sub "biblionomics-set-biblio-token-${Env}"
-      CodeUri: lambdas/set_biblionomics_token/
-      Handler: set_biblionomics_token.lambda_handler
+      FunctionName: !Sub "biblionomics-biblio-token-${Env}"
+      CodeUri: lambdas/biblionomics_token/
+      Handler: biblionomics_token.lambda_handler
       Role: !GetAtt LambdaExecutionRole.Arn
       Environment:
         Variables:
           ENRICH_FUNCTION_NAME: !Sub "biblionomics-enrich-one-book-${Env}"
       Events:
-        PostSetBiblioToken:
+        GetBiblioToken:
           Type: HttpApi
           Properties:
             ApiId: !Ref BiblionomicsApi
-            Path: /set-biblionomics-token
+            Path: /biblionomics-token
+            Method: GET
+        PostBiblioToken:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref BiblionomicsApi
+            Path: /biblionomics-token
             Method: POST
 
   EnrichOneBookFunction:
