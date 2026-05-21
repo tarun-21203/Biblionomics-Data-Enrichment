@@ -147,7 +147,7 @@ Resources:
       Role: !GetAtt LambdaExecutionRole.Arn
       Environment:
         Variables:
-          STATE_MACHINE_ARN: !Ref EnrichmentStateMachine
+          STATE_MACHINE_ARN: !Sub "arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:biblionomics-enrichment-pipeline-${Env}"
       Events:
         PostJobsBegin:
           Type: HttpApi
