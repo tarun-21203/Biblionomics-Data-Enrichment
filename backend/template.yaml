@@ -118,6 +118,10 @@ Resources:
                   - lambda:GetFunctionConfiguration
                   - lambda:UpdateFunctionConfiguration
                 Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:biblionomics-enrich-one-book-${Env}"
+              - Effect: Allow
+                Action:
+                  - states:StartExecution
+                Resource: !Sub "arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:biblionomics-enrichment-pipeline-${Env}"
 
   # ── Lambda Authorizer ────────────────────────────────────────────────────────
 
@@ -141,6 +145,9 @@ Resources:
       CodeUri: lambdas/job_starter/
       Handler: job_starter.lambda_handler
       Role: !GetAtt LambdaExecutionRole.Arn
+      Environment:
+        Variables:
+          STATE_MACHINE_ARN: !Ref EnrichmentStateMachine
       Events:
         PostJobsBegin:
           Type: HttpApi
@@ -206,7 +213,6 @@ Resources:
           Type: HttpApi
           Properties:
             ApiId: !Ref BiblionomicsApi
-
             Path: /jobs/generate-download
             Method: GET
 
@@ -293,7 +299,7 @@ Resources:
             AuthorizerPayloadFormatVersion: "2.0"
             EnableSimpleResponses: true
 
-# ── Orchestration Layer (Step Functions) ────────────────────────────────────
+  # ── Orchestration Layer (Step Functions) ────────────────────────────────────
 
   EnrichmentStateMachineRole:
     Type: AWS::IAM::Role
@@ -313,7 +319,7 @@ Resources:
             Statement:
               - Effect: Allow
                 Action: lambda:InvokeFunction
-                Resource: 
+                Resource:
                   - !GetAtt EnrichOneBookFunction.Arn
                   - !GetAtt ResultsAggregatorFunction.Arn
                   - !GetAtt JobStatusUpdaterFunction.Arn
@@ -431,8 +437,6 @@ Resources:
               - Effect: Allow
                 Action: lambda:InvokeFunction
                 Resource: !GetAtt AuthorizerFunction.Arn
-
-
 
 Outputs:
   ApiUrl:
