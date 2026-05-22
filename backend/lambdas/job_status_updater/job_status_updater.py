@@ -19,27 +19,33 @@ def lambda_handler(event, context):
     """
     aggregation_result = event.get('aggregationResult', {})
     job_id = aggregation_result.get('jobId') or event.get('jobId')
-    
+    output_key = aggregation_result.get('outputKey')
+
     if not job_id:
         raise ValueError("Missing jobId")
-        
+    
+    # Prepare update expression
+    update_expression = "SET #status = :status, updatedAt = :updatedAt"
+    expression_attribute_names = {'#status': 'status'}
+    expression_attribute_values = {
+        ':status': 'completed',  # Use lowercase to match frontend expectations
+        ':updatedAt': datetime.utcnow().isoformat()
+    }
+    
+    # Add outputS3Key if provided
+    if output_key:
+        update_expression += ", outputS3Key = :outputKey"
+        expression_attribute_values[':outputKey'] = output_key
+    
+    # Set processedIsbns to totalIsbns
+    update_expression += ", processedIsbns = totalIsbns"
+
     try:
         table.update_item(
             Key={'requestId': job_id},
-            UpdateExpression="SET #status = :status, updatedAt = :updatedAt",
-            ExpressionAttributeNames={
-                '#status': 'status'
-            },
-            ExpressionAttributeValues={
-                ':status': 'COMPLETED',
-                ':updatedAt': datetime.utcnow().isoformat()
-            }
+            UpdateExpression=update_expression,
+            ExpressionAttributeNames=expression_attribute_names,
+            ExpressionAttributeValues=expression_attribute_values
         )
     except Exception as e:
         print(f"Error updating DynamoDB: {e}")
-        raise e
-
-    return {
-        "jobId": job_id,
-        "jobStatus": "COMPLETED"
-    }
