@@ -161,7 +161,15 @@ def fetch_biblioshare(isbn):
             return {}
 
         root = ET.fromstring(res.content)
-        d    = {}
+        
+        # Check for error responses
+        message_text = root.find(".//MessageText")
+        if message_text is not None and message_text.text:
+            error_msg = message_text.text.strip()
+            print(f"BiblioShare error for ISBN {isbn}: {error_msg}")
+            return {}
+        
+        d = {}
 
         def ft(*tags, parent=None):
             """Return first non-empty text found across tag variants."""
