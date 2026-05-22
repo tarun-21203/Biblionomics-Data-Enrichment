@@ -59,10 +59,12 @@ export default function EnrichmentDetail() {
 
     const resolveUrls = useCallback(
         async (req: EnrichmentRequest) => {
-            let iUrl = isUrlValid(req.inputPresignedUrlExpiry) ? req.inputPresignedUrl ?? null : null;
+            let iUrl = isUrlValid(req.inputPresignedUrlExpiry)
+                ? (req.inputPresignedUrl ?? null)
+                : null;
             let oUrl =
                 req.status === "completed" && isUrlValid(req.outputPresignedUrlExpiry)
-                    ? req.outputPresignedUrl ?? null
+                    ? (req.outputPresignedUrl ?? null)
                     : null;
 
             const needsInput = !iUrl;
@@ -82,11 +84,52 @@ export default function EnrichmentDetail() {
             setOutputUrl(oUrl);
             return iUrl;
         },
-        [id]
+        [id],
     );
 
-    const parseCsv = (text: string) =>
-        text.trim().split("\n").map((line) => line.split(",").map((c) => c.trim()));
+    // Proper CSV parser that handles quoted fields, escaped quotes, and commas inside fields
+    const parseCsv = (text: string): string[][] => {
+        const lines = text.trim().split("\n");
+        const result: string[][] = [];
+
+        for (const line of lines) {
+            const row: string[] = [];
+            let current = "";
+            let inQuotes = false;
+            let i = 0;
+
+            while (i < line.length) {
+                const char = line[i];
+                const nextChar = line[i + 1];
+
+                if (char === '"') {
+                    if (inQuotes && nextChar === '"') {
+                        // Escaped quote: ""
+                        current += '"';
+                        i += 2;
+                    } else {
+                        // Toggle quote state
+                        inQuotes = !inQuotes;
+                        i++;
+                    }
+                } else if (char === "," && !inQuotes) {
+                    // End of field
+                    row.push(current.trim());
+                    current = "";
+                    i++;
+                } else {
+                    current += char;
+                    i++;
+                }
+            }
+
+            // Add the last field
+            row.push(current.trim());
+            result.push(row);
+        }
+
+        return result;
+    };
 
     const fetchCsv = useCallback(async (url: string) => {
         setLoadingCsv(true);
@@ -116,7 +159,8 @@ export default function EnrichmentDetail() {
 
             const iUrl = await resolveUrls(req);
             if (iUrl && csvRows.length === 0) fetchCsv(iUrl);
-            if (req.status === "completed" && outputUrl && outputCsvRows.length === 0) fetchOutputCsv(outputUrl);
+            if (req.status === "completed" && outputUrl && outputCsvRows.length === 0)
+                fetchOutputCsv(outputUrl);
 
             if (req.status !== "pending" && req.status !== "processing") {
                 if (pollRef.current) clearInterval(pollRef.current);
@@ -124,7 +168,15 @@ export default function EnrichmentDetail() {
         } catch (e: unknown) {
             setError(e instanceof Error ? e.message : "Failed to load request");
         }
-    }, [id, resolveUrls, fetchCsv, csvRows.length, fetchOutputCsv, outputUrl, outputCsvRows.length]);
+    }, [
+        id,
+        resolveUrls,
+        fetchCsv,
+        csvRows.length,
+        fetchOutputCsv,
+        outputUrl,
+        outputCsvRows.length,
+    ]);
 
     useEffect(() => {
         load();
@@ -147,13 +199,18 @@ export default function EnrichmentDetail() {
 
     async function handleDelete() {
         if (!id) return;
-        if (!window.confirm("Delete this enrichment request? This cannot be undone.")) return;
+        if (
+            !window.confirm("Delete this enrichment request? This cannot be undone.")
+        )
+            return;
         setActionError("");
         try {
             await jobDelete(id);
             navigate("/");
         } catch (e: unknown) {
-            setActionError(e instanceof Error ? e.message : "Failed to delete request");
+            setActionError(
+                e instanceof Error ? e.message : "Failed to delete request",
+            );
         }
     }
 
@@ -167,7 +224,11 @@ export default function EnrichmentDetail() {
     if (error) {
         return (
             <Box>
-                <Button startIcon={<ArrowBackIcon />} onClick={() => navigate("/")} sx={{ mb: 2 }}>
+                <Button
+                    startIcon={<ArrowBackIcon />}
+                    onClick={() => navigate("/")}
+                    sx={{ mb: 2 }}
+                >
                     Back
                 </Button>
                 <Alert severity="error">{error}</Alert>
@@ -187,7 +248,14 @@ export default function EnrichmentDetail() {
 
     return (
         <Box>
-            <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 3 }}>
+            <Box
+                sx={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    mb: 3,
+                }}
+            >
                 <Button startIcon={<ArrowBackIcon />} onClick={() => navigate("/")}>
                     Back to Dashboard
                 </Button>
@@ -226,7 +294,8 @@ export default function EnrichmentDetail() {
                 <StatusBadge status={item.status} />
             </Box>
             <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-                {item.requestId} &nbsp;·&nbsp; Created {new Date(item.createdAt * 1000).toLocaleString()}
+                {item.requestId} &nbsp;·&nbsp; Created{" "}
+                {new Date(item.createdAt * 1000).toLocaleString()}
             </Typography>
 
             {/* Progress */}
@@ -237,16 +306,28 @@ export default function EnrichmentDetail() {
                             Enrichment Progress
                         </Typography>
                         <Typography variant="body2" color="text.secondary">
-                            {item.processedIsbns.toLocaleString()} / {item.totalIsbns.toLocaleString()} ISBNs
+                            {item.processedIsbns.toLocaleString()} /{" "}
+                            {item.totalIsbns.toLocaleString()} ISBNs
                         </Typography>
                     </Box>
                     <LinearProgress
                         variant="determinate"
-                        value={item.totalIsbns ? (item.processedIsbns / item.totalIsbns) * 100 : 0}
+                        value={
+                            item.totalIsbns
+                                ? (item.processedIsbns / item.totalIsbns) * 100
+                                : 0
+                        }
                         sx={{ height: 8, borderRadius: 4 }}
                     />
-                    <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: "block" }}>
-                        {item.totalIsbns ? Math.round((item.processedIsbns / item.totalIsbns) * 100) : 0}% complete
+                    <Typography
+                        variant="caption"
+                        color="text.secondary"
+                        sx={{ mt: 0.5, display: "block" }}
+                    >
+                        {item.totalIsbns
+                            ? Math.round((item.processedIsbns / item.totalIsbns) * 100)
+                            : 0}
+                        % complete
                     </Typography>
                 </Paper>
             )}
@@ -257,7 +338,9 @@ export default function EnrichmentDetail() {
                     variant="outlined"
                     startIcon={<DownloadIcon />}
                     disabled={!inputUrl}
-                    onClick={() => inputUrl && handleDownload(inputUrl, `${item.identifier}_input.csv`)}
+                    onClick={() =>
+                        inputUrl && handleDownload(inputUrl, `${item.identifier}_input.csv`)
+                    }
                 >
                     Download Input CSV
                 </Button>
@@ -266,7 +349,10 @@ export default function EnrichmentDetail() {
                         variant="contained"
                         startIcon={<DownloadIcon />}
                         disabled={!outputUrl}
-                        onClick={() => outputUrl && handleDownload(outputUrl, `${item.identifier}_output.csv`)}
+                        onClick={() =>
+                            outputUrl &&
+                            handleDownload(outputUrl, `${item.identifier}_output.csv`)
+                        }
                     >
                         Download Output CSV
                     </Button>
@@ -281,10 +367,24 @@ export default function EnrichmentDetail() {
                     </Typography>
                     <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
                         {item.notes.map((note: EnrichmentNote, i: number) => (
-                            <Alert key={i} severity={noteColor[note.type] ?? "info"} sx={{ py: 0.5 }}>
-                                <Box sx={{ display: "flex", justifyContent: "space-between", gap: 2 }}>
+                            <Alert
+                                key={i}
+                                severity={noteColor[note.type] ?? "info"}
+                                sx={{ py: 0.5 }}
+                            >
+                                <Box
+                                    sx={{
+                                        display: "flex",
+                                        justifyContent: "space-between",
+                                        gap: 2,
+                                    }}
+                                >
                                     <Typography variant="body2">{note.message}</Typography>
-                                    <Typography variant="caption" color="text.secondary" sx={{ whiteSpace: "nowrap" }}>
+                                    <Typography
+                                        variant="caption"
+                                        color="text.secondary"
+                                        sx={{ whiteSpace: "nowrap" }}
+                                    >
                                         {new Date(note.timestamp).toLocaleTimeString()}
                                     </Typography>
                                 </Box>
@@ -299,26 +399,37 @@ export default function EnrichmentDetail() {
             {/* Input CSV */}
             <Typography variant="subtitle1" fontWeight={600} gutterBottom>
                 Input CSV
-                <Chip label={`${Math.max(0, csvRows.length - 1)} ISBNs`} size="small" sx={{ ml: 1 }} />
+                <Chip
+                    label={`${Math.max(0, csvRows.length - 1)} ISBNs`}
+                    size="small"
+                    sx={{ ml: 1 }}
+                />
             </Typography>
 
             {loadingCsv ? (
                 <CircularProgress size={24} />
             ) : csvRows.length > 0 ? (
-                <TableContainer component={Paper} variant="outlined" sx={{ maxHeight: 400, mb: 4 }}>
+                <TableContainer
+                    component={Paper}
+                    variant="outlined"
+                    sx={{ maxHeight: 400, mb: 4 }}
+                >
                     <Table stickyHeader size="small">
                         <TableHead>
                             <TableRow>
                                 {csvRows[0].map((col, i) => (
-                                    <TableCell key={i} sx={{ fontWeight: 600 }}>{col}</TableCell>
+                                    <TableCell key={i} sx={{ fontWeight: 600 }}>
+                                        {col}
+                                    </TableCell>
                                 ))}
                             </TableRow>
                         </TableHead>
                         <TableBody>
                             {csvRows.slice(1).map((row, i) => (
                                 <TableRow key={i}>
-                                    {row.map((cell, j) => <TableCell key={j}>{cell}</TableCell>)}
-
+                                    {row.map((cell, j) => (
+                                        <TableCell key={j}>{cell}</TableCell>
+                                    ))}
                                 </TableRow>
                             ))}
                         </TableBody>
@@ -336,22 +447,34 @@ export default function EnrichmentDetail() {
                     <Divider sx={{ mb: 3 }} />
                     <Typography variant="subtitle1" fontWeight={600} gutterBottom>
                         Output CSV
-                        <Chip label={`${Math.max(0, outputCsvRows.length - 1)} rows`} size="small" sx={{ ml: 1 }} />
+                        <Chip
+                            label={`${Math.max(0, outputCsvRows.length - 1)} rows`}
+                            size="small"
+                            sx={{ ml: 1 }}
+                        />
                     </Typography>
                     {outputCsvRows.length > 0 ? (
-                        <TableContainer component={Paper} variant="outlined" sx={{ maxHeight: 400 }}>
+                        <TableContainer
+                            component={Paper}
+                            variant="outlined"
+                            sx={{ maxHeight: 400 }}
+                        >
                             <Table stickyHeader size="small">
                                 <TableHead>
                                     <TableRow>
                                         {outputCsvRows[0].map((col, i) => (
-                                            <TableCell key={i} sx={{ fontWeight: 600 }}>{col}</TableCell>
+                                            <TableCell key={i} sx={{ fontWeight: 600 }}>
+                                                {col}
+                                            </TableCell>
                                         ))}
                                     </TableRow>
                                 </TableHead>
                                 <TableBody>
                                     {outputCsvRows.slice(1).map((row, i) => (
                                         <TableRow key={i}>
-                                            {row.map((cell, j) => <TableCell key={j}>{cell}</TableCell>)}
+                                            {row.map((cell, j) => (
+                                                <TableCell key={j}>{cell}</TableCell>
+                                            ))}
                                         </TableRow>
                                     ))}
                                 </TableBody>
