@@ -10,6 +10,7 @@ import requests
 from config import (
     BIBLIOSHARE_ENDPOINT,
     GOOGLE_BOOKS_ENDPOINT,
+    GOOGLE_BOOKS_API_KEY,
     OPEN_LIBRARY_ENDPOINT,
     MAX_RETRIES,
     RETRY_BACKOFF_FACTOR,
@@ -64,7 +65,10 @@ def fetch_google_books(isbn):
     Returns volumeInfo dict or None.
     """
     try:
-        res = fetch_with_retry(f"{GOOGLE_BOOKS_ENDPOINT}?q=isbn:{isbn}")
+        url = f"{GOOGLE_BOOKS_ENDPOINT}?q=isbn:{isbn}"
+        if GOOGLE_BOOKS_API_KEY:
+            url += f"&key={GOOGLE_BOOKS_API_KEY}"
+        res = fetch_with_retry(url)
         if res:
             data = res.json()
             total_items = data.get('totalItems', 0)

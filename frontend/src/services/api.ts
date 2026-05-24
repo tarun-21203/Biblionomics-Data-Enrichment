@@ -128,3 +128,14 @@ export function setBiblioToken(token: string): Promise<{ message: string }> {
         body: JSON.stringify({ token }),
     });
 }
+
+export function getGoogleApiKey(): Promise<{ key: string }> {
+    return request("/google-api-key");
+}
+
+export function setGoogleApiKey(key: string): Promise<{ message: string }> {
+    return request("/google-api-key", {
+        method: "POST",
+        body: JSON.stringify({ key }),
+    });
+}

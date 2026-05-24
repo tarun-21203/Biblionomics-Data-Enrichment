@@ -4,6 +4,7 @@ export interface AppConfig {
     apiUrl: string;
     apiKey: string;
     biblioToken: string;
+    googleApiKey: string;
 }
 
 export function getConfig(): AppConfig {
@@ -15,6 +16,7 @@ export function getConfig(): AppConfig {
         apiUrl: import.meta.env.VITE_API_URL ?? "",
         apiKey: import.meta.env.VITE_API_KEY ?? "",
         biblioToken: "",
+        googleApiKey: "",
     };
 }
 

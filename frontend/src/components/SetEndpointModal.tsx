@@ -9,7 +9,7 @@ import Stack from "@mui/material/Stack";
 import Alert from "@mui/material/Alert";
 import CircularProgress from "@mui/material/CircularProgress";
 import { getConfig, saveConfig } from "../services/config";
-import { getBiblioToken, setBiblioToken } from "../services/api";
+import { getBiblioToken, setBiblioToken, getGoogleApiKey, setGoogleApiKey } from "../services/api";
 import InputAdornment from "@mui/material/InputAdornment";
 
 interface Props {
@@ -22,8 +22,10 @@ export default function SetEndpointModal({ open, onClose }: Props) {
     const [apiUrl, setApiUrl] = useState(current.apiUrl);
     const [apiKey, setApiKey] = useState(current.apiKey);
     const [biblioToken, setBiblioTokenState] = useState(current.biblioToken);
+    const [googleApiKey, setGoogleApiKeyState] = useState(current.googleApiKey);
     const [saving, setSaving] = useState(false);
     const [fetching, setFetching] = useState(false);
+    const [fetchingGoogle, setFetchingGoogle] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
     async function handleGetToken() {
@@ -38,15 +40,36 @@ export default function SetEndpointModal({ open, onClose }: Props) {
         setFetching(false);
     }
 
+    async function handleGetGoogleApiKey() {
+        setFetchingGoogle(true);
+        setError(null);
+        try {
+            const res = await getGoogleApiKey();
+            setGoogleApiKeyState(res.key);
+        } catch (e) {
+            setError("Unable to fetch Google API key: " + (e instanceof Error ? e.message : String(e)));
+        }
+        setFetchingGoogle(false);
+    }
+
     async function handleSave() {
         setSaving(true);
         setError(null);
-        saveConfig({ apiUrl: apiUrl.trim(), apiKey: apiKey.trim(), biblioToken: biblioToken.trim() });
+        saveConfig({ apiUrl: apiUrl.trim(), apiKey: apiKey.trim(), biblioToken: biblioToken.trim(), googleApiKey: googleApiKey.trim() });
         if (biblioToken.trim()) {
             try {
                 await setBiblioToken(biblioToken.trim());
             } catch (e) {
                 setError("Unable to save the token: " + (e instanceof Error ? e.message : String(e)));
+                setSaving(false);
+                return;
+            }
+        }
+        if (googleApiKey.trim()) {
+            try {
+                await setGoogleApiKey(googleApiKey.trim());
+            } catch (e) {
+                setError("Unable to save the Google API key: " + (e instanceof Error ? e.message : String(e)));
                 setSaving(false);
                 return;
             }
@@ -89,6 +112,26 @@ export default function SetEndpointModal({ open, onClose }: Props) {
                                         disabled={fetching || saving}
                                     >
                                         {fetching ? <CircularProgress size={14} /> : "Get Token on Cloud"}
+                                    </Button>
+                                </InputAdornment>
+                            ),
+                        }}
+                    />
+                    <TextField
+                        label="Google Books API Key"
+                        value={googleApiKey}
+                        onChange={(e) => setGoogleApiKeyState(e.target.value)}
+                        fullWidth
+                        helperText="Leave blank to keep the existing key unchanged."
+                        InputProps={{
+                            endAdornment: (
+                                <InputAdornment position="end">
+                                    <Button
+                                        size="small"
+                                        onClick={handleGetGoogleApiKey}
+                                        disabled={fetchingGoogle || saving}
+                                    >
+                                        {fetchingGoogle ? <CircularProgress size={14} /> : "Get Key on Cloud"}
                                     </Button>
                                 </InputAdornment>
                             ),

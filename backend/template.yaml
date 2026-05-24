@@ -26,9 +26,13 @@ Parameters:
     Type: String
     NoEcho: true
     Description: "Token for the BiblioShare API"
+  GoogleBooksApiKey:
+    Type: String
+    NoEcho: true
+    Default: ""
+    Description: "API key for the Google Books API"
 
 Resources:
-
   # ── S3 Buckets ──────────────────────────────────────────────────────────────
 
   InputBucket:
@@ -240,6 +244,30 @@ Resources:
             Path: /biblionomics-token
             Method: POST
 
+  GoogleApiKeyFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "biblionomics-google-api-key-${Env}"
+      CodeUri: lambdas/google_api_key/
+      Handler: google_api_key.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Environment:
+        Variables:
+          ENRICH_FUNCTION_NAME: !Sub "biblionomics-enrich-one-book-${Env}"
+      Events:
+        GetGoogleApiKey:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref BiblionomicsApi
+            Path: /google-api-key
+            Method: GET
+        PostGoogleApiKey:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref BiblionomicsApi
+            Path: /google-api-key
+            Method: POST
+
   EnrichOneBookFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -251,6 +279,7 @@ Resources:
       Environment:
         Variables:
           BIBLIOSHARE_TOKEN: !Ref BiblioShareToken
+          GOOGLE_BOOKS_API_KEY: !Ref GoogleBooksApiKey
 
   ResultsAggregatorFunction:
     Type: AWS::Serverless::Function

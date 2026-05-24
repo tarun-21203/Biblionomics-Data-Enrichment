@@ -3,6 +3,8 @@ BIBLIOnomics — Configuration & Mapping Tables
 All constants, API endpoints, and mapping tables from the specification appendices.
 """
 
+import os
+
 # ── API Configuration ────────────────────────────────────────────────────────
 
 BIBLIOSHARE_ENDPOINT = (
@@ -11,6 +13,7 @@ BIBLIOSHARE_ENDPOINT = (
 GOOGLE_BOOKS_ENDPOINT = (
     "https://www.googleapis.com/books/v1/volumes"
 )
+GOOGLE_BOOKS_API_KEY = os.environ.get("GOOGLE_BOOKS_API_KEY", "")
 OPEN_LIBRARY_ENDPOINT = "https://openlibrary.org/isbn/{isbn}.json"
 
 # Rate limits (seconds between calls)
