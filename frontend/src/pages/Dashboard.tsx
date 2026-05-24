@@ -37,7 +37,7 @@ export default function Dashboard() {
     const load = useCallback(async () => {
         try {
             const data = await getStatusAll(filter || undefined, statusFilter || undefined);
-            setRequests(data.requests);
+            setRequests([...data.requests].sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0)));
             setError("");
         } catch (e: unknown) {
             setError(e instanceof Error ? e.message : "Failed to load requests");
