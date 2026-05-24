@@ -118,24 +118,17 @@ export function jobDelete(requestId: string): Promise<{ message: string }> {
     });
 }
 
-export function getBiblioToken(): Promise<{ token: string }> {
+export function getBiblioToken(): Promise<{ biblionomicsApiKey: string }> {
     return request("/biblionomics-token");
-}
-
-export function setBiblioToken(token: string): Promise<{ message: string }> {
-    return request("/biblionomics-token", {
-        method: "POST",
-        body: JSON.stringify({ token }),
-    });
 }
 
 export function getGoogleApiKey(): Promise<{ key: string }> {
     return request("/google-api-key");
 }
 
-export function setGoogleApiKey(key: string): Promise<{ message: string }> {
-    return request("/google-api-key", {
+export function setTokens(biblionomicsApiKey?: string, googleApiKey?: string): Promise<{ message: string }> {
+    return request("/set-token", {
         method: "POST",
-        body: JSON.stringify({ key }),
+        body: JSON.stringify({ biblionomicsApiKey, googleApiKey }),
     });
 }

@@ -241,32 +241,14 @@ Resources:
           Type: HttpApi
           Properties:
             ApiId: !Ref BiblionomicsApi
-            Path: /biblionomics-token
+            Path: /set-token
             Method: POST
-
-  GoogleApiKeyFunction:
-    Type: AWS::Serverless::Function
-    Properties:
-      FunctionName: !Sub "biblionomics-google-api-key-${Env}"
-      CodeUri: lambdas/google_api_key/
-      Handler: google_api_key.lambda_handler
-      Role: !GetAtt LambdaExecutionRole.Arn
-      Environment:
-        Variables:
-          ENRICH_FUNCTION_NAME: !Sub "biblionomics-enrich-one-book-${Env}"
-      Events:
         GetGoogleApiKey:
           Type: HttpApi
           Properties:
             ApiId: !Ref BiblionomicsApi
             Path: /google-api-key
             Method: GET
-        PostGoogleApiKey:
-          Type: HttpApi
-          Properties:
-            ApiId: !Ref BiblionomicsApi
-            Path: /google-api-key
-            Method: POST
 
   EnrichOneBookFunction:
     Type: AWS::Serverless::Function

@@ -9,7 +9,7 @@ import Stack from "@mui/material/Stack";
 import Alert from "@mui/material/Alert";
 import CircularProgress from "@mui/material/CircularProgress";
 import { getConfig, saveConfig } from "../services/config";
-import { getBiblioToken, setBiblioToken, getGoogleApiKey, setGoogleApiKey } from "../services/api";
+import { getBiblioToken, getGoogleApiKey, setTokens } from "../services/api";
 import InputAdornment from "@mui/material/InputAdornment";
 
 interface Props {
@@ -21,7 +21,7 @@ export default function SetEndpointModal({ open, onClose }: Props) {
     const current = getConfig();
     const [apiUrl, setApiUrl] = useState(current.apiUrl);
     const [apiKey, setApiKey] = useState(current.apiKey);
-    const [biblioToken, setBiblioTokenState] = useState(current.biblioToken);
+    const [biblionomicsApiKey, setBiblioApiKeyState] = useState(current.biblioToken);
     const [googleApiKey, setGoogleApiKeyState] = useState(current.googleApiKey);
     const [saving, setSaving] = useState(false);
     const [fetching, setFetching] = useState(false);
@@ -33,7 +33,7 @@ export default function SetEndpointModal({ open, onClose }: Props) {
         setError(null);
         try {
             const res = await getBiblioToken();
-            setBiblioTokenState(res.token);
+            setBiblioApiKeyState(res.biblionomicsApiKey);
         } catch (e) {
             setError("Unable to fetch token: " + (e instanceof Error ? e.message : String(e)));
         }
@@ -55,21 +55,12 @@ export default function SetEndpointModal({ open, onClose }: Props) {
     async function handleSave() {
         setSaving(true);
         setError(null);
-        saveConfig({ apiUrl: apiUrl.trim(), apiKey: apiKey.trim(), biblioToken: biblioToken.trim(), googleApiKey: googleApiKey.trim() });
-        if (biblioToken.trim()) {
+        saveConfig({ apiUrl: apiUrl.trim(), apiKey: apiKey.trim(), biblioToken: biblionomicsApiKey.trim(), googleApiKey: googleApiKey.trim() });
+        if (biblionomicsApiKey.trim() || googleApiKey.trim()) {
             try {
-                await setBiblioToken(biblioToken.trim());
+                await setTokens(biblionomicsApiKey.trim() || undefined, googleApiKey.trim() || undefined);
             } catch (e) {
-                setError("Unable to save the token: " + (e instanceof Error ? e.message : String(e)));
-                setSaving(false);
-                return;
-            }
-        }
-        if (googleApiKey.trim()) {
-            try {
-                await setGoogleApiKey(googleApiKey.trim());
-            } catch (e) {
-                setError("Unable to save the Google API key: " + (e instanceof Error ? e.message : String(e)));
+                setError("Unable to save config: " + (e instanceof Error ? e.message : String(e)));
                 setSaving(false);
                 return;
             }
@@ -98,11 +89,11 @@ export default function SetEndpointModal({ open, onClose }: Props) {
                         fullWidth
                     />
                     <TextField
-                        label="Biblionomics Token"
-                        value={biblioToken}
-                        onChange={(e) => setBiblioTokenState(e.target.value)}
+                        label="Biblionomics API Key"
+                        value={biblionomicsApiKey}
+                        onChange={(e) => setBiblioApiKeyState(e.target.value)}
                         fullWidth
-                        helperText="Leave blank to keep the existing token unchanged."
+                        helperText="Leave blank to keep the existing key unchanged."
                         InputProps={{
                             endAdornment: (
                                 <InputAdornment position="end">
@@ -111,7 +102,7 @@ export default function SetEndpointModal({ open, onClose }: Props) {
                                         onClick={handleGetToken}
                                         disabled={fetching || saving}
                                     >
-                                        {fetching ? <CircularProgress size={14} /> : "Get Token on Cloud"}
+                                        {fetching ? <CircularProgress size={14} /> : "Get Key on Cloud"}
                                     </Button>
                                 </InputAdornment>
                             ),
