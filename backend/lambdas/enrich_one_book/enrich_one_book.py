@@ -1,12 +1,13 @@
 import boto3
-import requests
 import os
 import uuid
 import re
-import time
-import html as html_lib
-import xml.etree.ElementTree as ET
 from datetime import datetime
+
+# Import modular components
+from api_clients import fetch_biblioshare, fetch_google_books, fetch_open_library
+from onix_parser import parse_onix
+from html_utils import clean_html
 
 from config import (
     BISAC_TO_INDUSTRY, BISAC_INDUSTRY_DEFAULT,
@@ -16,31 +17,10 @@ from config import (
     LOCATION_SIGNAL_VERBS, REGION_DISPLAY_LABELS,
     PROFESSION_MODIFIERS, AWARD_PATTERNS,
     CSV_FIELD_NAMES,
-    BIBLIOSHARE_ENDPOINT, GOOGLE_BOOKS_ENDPOINT, OPEN_LIBRARY_ENDPOINT,
-    MAX_RETRIES, RETRY_BACKOFF_FACTOR,
 )
 
 comprehend = boto3.client('comprehend')
 
-# ── ONIX Code → Human-Readable Maps ──────────────────────────────────────────
-FORM_MAP = {
-    'BB': 'Hardcover', 'BA': 'Hardcover', 'BC': 'Paperback',
-    'BG': 'Spiral Bound', 'BH': 'Loose-leaf', 'BF': 'Bound Sheets',
-    'DG': 'eBook', 'DA': 'eBook', 'AJ': 'Audiobook', 'AI': 'Audiobook',
-}
-FORM_DETAIL_MAP = {
-    'B401': 'Jacketed',        'B402': 'Loose Jacket',    'B403': 'Laminated',
-    'B406': 'With Dust Jacket','B407': 'Concealed Lamination',
-    'B304': 'Trade Paperback', 'B302': 'Mass Market Paperback',
-    'B501': 'Sewn',            'B502': 'Perfect Bound',   'B503': 'Library Binding',
-    'B504': 'Spiral Bound',    'B601': 'Deckle Edge',     'B610': 'Gilt Edges',
-    'B704': 'Pop-up',
-}
-AUDIENCE_MAP = {
-    '01': 'General/Trade',     '02': 'Children',          '03': 'Young Adult',
-    '04': 'Primary Education', '05': 'Secondary Education',
-    '06': 'Higher Education',  '07': 'Professional/Academic',
-}
 
 # ── US location keywords (catch-all for non-Canadian locations) ───────────────
 US_LOCATION_KEYWORDS = {
@@ -82,30 +62,6 @@ PROFESSION_KEYWORDS = [
 # UTILITIES
 # ─────────────────────────────────────────────────────────────────────────────
 
-def strip_html(text):
-    """Decode HTML entities, remove tags, collapse whitespace."""
-    if not text:
-        return ""
-    text = html_lib.unescape(text)
-    text = re.sub(r'<[^>]+>', ' ', text)
-    return re.sub(r'\s+', ' ', text).strip()
-
-
-def fetch_with_retry(url, timeout=5):
-    """GET with exponential-backoff retry driven by config constants."""
-    for attempt in range(MAX_RETRIES):
-        try:
-            res = requests.get(url, timeout=timeout)
-            if res.status_code == 200:
-                return res
-            if res.status_code in (429, 503):
-                time.sleep(RETRY_BACKOFF_FACTOR ** (attempt + 1))
-        except requests.exceptions.RequestException as e:
-            print(f"Request error [{url}]: {e}")
-            if attempt < MAX_RETRIES - 1:
-                time.sleep(RETRY_BACKOFF_FACTOR ** (attempt + 1))
-    return None
-
 
 def isbn13_to_isbn10(isbn13):
     """Compute ISBN-10 via Mod-11 from a 978-prefix ISBN-13."""
@@ -114,267 +70,6 @@ def isbn13_to_isbn10(isbn13):
     core  = isbn13[3:12]
     check = sum((i + 1) * int(d) for i, d in enumerate(core)) % 11
     return core + ('X' if check == 10 else str(check))
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# DATA FETCHERS
-# ─────────────────────────────────────────────────────────────────────────────
-
-def fetch_google_books(isbn):
-    try:
-        res = fetch_with_retry(f"{GOOGLE_BOOKS_ENDPOINT}?q=isbn:{isbn}")
-        if res:
-            data = res.json()
-            total_items = data.get('totalItems', 0)
-            
-            if 'items' in data and total_items > 0:
-                # If exactly 1 item, return it (exact match)
-                if total_items == 1:
-                    return data['items'][0]['volumeInfo']
-                
-                # If more than 1 but <= 5 items, validate ISBN13 match
-                elif 1 < total_items <= 5:
-                    for item in data['items']:
-                        volume_info = item.get('volumeInfo', {})
-                        identifiers = volume_info.get('industryIdentifiers', [])
-                        
-                        for identifier in identifiers:
-                            if identifier.get('type') == 'ISBN_13' and identifier.get('identifier') == isbn:
-                                print(f"Google Books: Found exact ISBN13 match for {isbn} in {total_items} results")
-                                return volume_info
-                    
-                    # No exact ISBN13 match found
-                    print(f"Google Books: No exact ISBN13 match for {isbn} in {total_items} results")
-                    return None
-                
-                # If more than 5 items, no exact match expected
-                else:
-                    print(f"Google Books: Too many results ({total_items}) for {isbn}, no exact match expected")
-                    return None
-                    
-    except Exception as e:
-        print(f"Google Books Error: {e}")
-    return None
-
-
-def fetch_open_library(isbn):
-    try:
-        res = fetch_with_retry(OPEN_LIBRARY_ENDPOINT.format(isbn=isbn))
-        if res:
-            return res.json()
-
-
-    except Exception as e:
-        print(f"Open Library Error: {e}")
-    return None
-
-
-def fetch_biblioshare(isbn):
-    """Fetch and fully parse ONIX 2.1 / 3.0 from BiblioShare."""
-
-
-    token = os.environ.get('BIBLIOSHARE_TOKEN')
-    if not token:
-        print("Missing BIBLIOSHARE_TOKEN.")
-        return {}
-
-    try:
-        res = fetch_with_retry(
-            f"{BIBLIOSHARE_ENDPOINT}?Token={token}&EAN={isbn}", timeout=8
-        )
-        if not res:
-            return {}
-
-        root = ET.fromstring(res.content)
-        
-        # Check for error responses
-        message_text = root.find(".//MessageText")
-        if message_text is not None and message_text.text:
-            error_msg = message_text.text.strip()
-            print(f"BiblioShare error for ISBN {isbn}: {error_msg}")
-            return {}
-        
-        d = {}
-
-        def ft(*tags, parent=None):
-            """Return first non-empty text found across tag variants."""
-            node = parent if parent is not None else root
-            for tag in tags:
-                el = node.find(f".//{tag}")
-                if el is not None and el.text and el.text.strip():
-                    return el.text.strip()
-            return ""
-
-        # ── Identifiers ───────────────────────────────────────────────────────
-        for pid in root.iter('ProductIdentifier'):
-            ptype = ft('ProductIDType', 'b221', parent=pid)
-            val   = ft('IDValue',       'b244', parent=pid)
-            if ptype == '02':   d['isbn_10'] = val
-            elif ptype == '03': d['isbn_13'] = val
-
-        # ── Contributors & Bio ────────────────────────────────────────────────
-        contributors, bio_raw = [], ""
-        for contrib in root.iter('Contributor'):
-            role    = ft('ContributorRole', 'b035', parent=contrib)
-            name    = ft('PersonName', 'b036', 'PersonNameInverted', 'b037',
-                         'CorporateName', 'b047', parent=contrib)
-            country = ft('CountryCode', 'b251', parent=contrib)
-            if name:
-                contributors.append({'name': name, 'role': role, 'country': country})
-            if not bio_raw:
-                b = ft('BiographicalNote', 'b044', parent=contrib)
-                if b:
-                    bio_raw = b
-        d['contributors'] = contributors
-        d['bio']          = bio_raw
-        d['cdn_creator']  = 'TRUE' if any(c.get('country') == 'CA' for c in contributors) else 'FALSE'
-
-        # ── Title / Subtitle ──────────────────────────────────────────────────
-        d['title']    = ft('TitleText', 'b203', 'DistinctiveTitle')
-        d['subtitle'] = ft('Subtitle', 'b029')
-
-        # ── Series ────────────────────────────────────────────────────────────
-        d['series_title']  = ft('TitleOfSeries', 'b018')
-        d['series_number'] = ft('NumberWithinSeries', 'b019')
-        d['volume_number'] = ft('VolumeNumber', 'b033')
-
-        # ── Publisher / Publication Date ──────────────────────────────────────
-        d['publisher'] = ft('PublisherName', 'b081')
-        pub_raw = ft('PublicationDate', 'b003')
-        if pub_raw and len(pub_raw) == 8 and pub_raw.isdigit():
-            d['publication_date'] = f"{pub_raw[:4]}-{pub_raw[4:6]}-{pub_raw[6:]}"
-        else:
-            d['publication_date'] = pub_raw
-
-        # ── Product Form ──────────────────────────────────────────────────────
-        pf          = ft('ProductForm', 'b012')
-        pfd         = ft('ProductFormDetail', 'b333')
-        form_name   = FORM_MAP.get(pf, pf or "")
-        form_detail = FORM_DETAIL_MAP.get(pfd, "")   # blank if unrecognised code
-        d['product_form']  = pf
-        d['book_format']   = f"{form_name}, {form_detail}".strip(', ') if form_detail else form_name
-        d['format_simple'] = form_name
-
-        # ── Target Audience ───────────────────────────────────────────────────
-        d['target_audience'] = AUDIENCE_MAP.get(ft('AudienceCode', 'b073'), 'General/Trade')
-
-        # ── Descriptions ─────────────────────────────────────────────────────
-        # ONIX 2.1 TextTypeCode: 01=main, 02=long, 04=TOC
-        # ONIX 3.0 TextType:     02=short, 03=long, 08=TOC
-        short_raw, long_raw, toc_raw = "", "", ""
-        for ot in root.iter('OtherText'):
-            code = ft('TextTypeCode', 'd102', parent=ot)
-            text = ft('Text', 'd104', parent=ot)
-            if code == '01' and not short_raw: short_raw = text
-            elif code in ('02', '03') and not long_raw: long_raw = text
-            elif code == '04' and not toc_raw: toc_raw = text
-        for tc in root.iter('TextContent'):
-            code = ft('TextType', 'x426', parent=tc)
-            text = ft('Text', 'd104', parent=tc)
-            if code == '02' and not short_raw: short_raw = text
-            elif code in ('03', '04') and not long_raw: long_raw = text
-            elif code == '08' and not toc_raw: toc_raw = text
-        # If only a single long text came through under the 'short' slot, re-assign
-        if short_raw and not long_raw and len(short_raw) > 400:
-            long_raw, short_raw = short_raw, ""
-        d['short_description'] = short_raw
-        d['long_description']  = long_raw
-        d['table_of_contents'] = toc_raw
-
-        # ── Page Count ────────────────────────────────────────────────────────
-        for ext in root.iter('Extent'):
-            etype = ft('ExtentType', 'b218', parent=ext)
-            eval_ = ft('ExtentValue', 'b219', parent=ext)
-            if etype in ('00', '11') and eval_.isdigit():
-                d['page_count'] = int(eval_)
-                break
-
-        # ── Dimensions / Weight ───────────────────────────────────────────────
-        dims = {}
-        for meas in root.iter('Measure'):
-            mtype = ft('MeasureType', 'MeasureTypeCode', 'c093', parent=meas)
-            mval  = ft('Measurement', 'c094', parent=meas)
-            munit = (ft('MeasureUnitCode', 'c095', parent=meas) or '').lower()
-            try:
-                v = float(mval)
-            except (ValueError, TypeError):
-                continue
-
-            # Normalise to both mm and inches
-            if munit in ('mm', '01'):
-                mm_v, in_v = round(v), round(v / 25.4, 1)
-            elif munit == 'cm':
-                mm_v, in_v = round(v * 10), round(v / 2.54, 1)
-            elif munit in ('in', '02'):
-                in_v, mm_v = round(v, 1), round(v * 25.4)
-            elif munit in ('oz', '03') and mtype == '08':
-                dims.update(weight_g=round(v * 28.35), weight_lb=round(v / 16, 2)); continue
-            elif munit in ('lb', '04') and mtype == '08':
-                dims.update(weight_g=round(v * 453.592), weight_lb=round(v, 2)); continue
-            elif munit in ('gr', 'g', '05') and mtype == '08':
-                dims.update(weight_g=round(v), weight_lb=round(v / 453.592, 2)); continue
-            else:
-                mm_v, in_v = round(v), round(v / 25.4, 1)
-
-            if   mtype in ('01',): dims.update(height_mm=mm_v,    height_in=in_v)
-            elif mtype in ('02',): dims.update(width_mm=mm_v,     width_in=in_v)
-            elif mtype in ('03',): dims.update(thickness_mm=mm_v, thickness_in=in_v)
-        d['dimensions'] = dims
-
-        # ── BISAC Subjects — stored as ordered (code, heading) pairs ──────────
-        subj_pairs = []
-        for ms in root.iter('BASICMainSubject'):
-            if ms.text:
-                c = ms.text.strip()
-                subj_pairs.insert(0, (c, BISAC_CODE_TO_HEADING.get(c, '')))
-        for subj in root.iter('Subject'):
-            scheme = ft('SubjectSchemeIdentifier', 'b067', 'x425', parent=subj)
-            if scheme in ('10', '12'):
-                c = ft('SubjectCode', 'b069', parent=subj)
-                h = ft('SubjectHeadingText', 'b070', parent=subj)
-                if c and not any(p[0] == c for p in subj_pairs):
-                    subj_pairs.append((c, h or BISAC_CODE_TO_HEADING.get(c, '')))
-        d['bisac_pairs'] = subj_pairs
-
-        # ── Awards ────────────────────────────────────────────────────────────
-        d['awards'] = "; ".join(
-            ft('PrizeName', 'g126', parent=p)
-            for p in root.iter('Prize')
-            if ft('PrizeName', 'g126', parent=p)
-        )
-
-        # ── Pricing ───────────────────────────────────────────────────────────
-        prices = {}
-        for price in root.iter('Price'):
-            currency = ft('CurrencyCode', 'j152', parent=price)
-            amount   = ft('PriceAmount',  'j151', parent=price)
-            try:
-                prices[currency.upper()] = float(amount)
-            except (ValueError, AttributeError):
-                pass
-        d['prices'] = prices
-
-        # ── Cover Image ───────────────────────────────────────────────────────
-        cover_url = ""
-        for mf in root.iter('MediaFile'):
-            if ft('MediaFileTypeCode', 'f114', parent=mf) in ('04', '03'):
-                cover_url = ft('MediaFileLink', 'f116', parent=mf)
-                if cover_url: break
-        if not cover_url:
-            for sr in root.iter('SupportingResource'):
-                if ft('ResourceContentType', parent=sr) == '01':
-                    rv = sr.find('.//ResourceVersion')
-                    if rv is not None:
-                        cover_url = ft('ResourceLink', parent=rv)
-                        if cover_url: break
-        d['cover_url'] = cover_url
-
-        return d
-
-    except Exception as e:
-        print(f"BiblioShare Error: {e}")
-        return {}
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # ENRICHMENT HELPERS
@@ -463,22 +158,6 @@ def clean_profession(raw):
     return result.strip()
 
 
-def resolve_institution(bio_clean, comprehend_orgs):
-    """
-    Return the author's primary institution.
-    Prefers context-matched orgs (founder of X / serves at X) over bare NER,
-    and excludes known media organisations.
-    """
-    for m in AFFILIATION_RE.finditer(bio_clean):
-        candidate = m.group(1).strip().rstrip('.,;')
-        if len(candidate) > 3:
-            return candidate
-    for org in comprehend_orgs:
-        if org.lower() not in MEDIA_ORG_DENYLIST:
-            return org
-    return comprehend_orgs[0] if comprehend_orgs else ""
-
-
 def extract_awards_from_text(text):
     """Use AWARD_PATTERNS from config to mine award mentions out of free text."""
     if not text:
@@ -541,17 +220,38 @@ def extract_extras(bio, entities):
 
 def calc_confidence(book, entities):
     score = 30
-    if book.get('title')          and book['title']          != "Unknown": score += 5
-    if book.get('primary_author') and book['primary_author'] != "Unknown": score += 5
-    locs = [e for e in entities if e['Type'] == 'LOCATION'     and e['Score'] > 0.8]
-    orgs = [e for e in entities if e['Type'] == 'ORGANIZATION' and e['Score'] > 0.8]
-    if locs: score += 10
-    if orgs: score += 10
-    if len(book.get('author_description', '')) > 100: score += 10
-    if book.get('google_books_available') == "TRUE":  score += 10
-    if book.get('open_library_available') == "TRUE":  score += 5
-    if book.get('bisac_primary_code'):                score += 5
-    return min(score, 100)
+    
+    if book.get('title') and book['title'] != "Unknown": 
+        score += 5
+    
+    if book.get('primary_author') and book['primary_author'] != "Unknown": 
+        score += 5
+    
+    # FIXED: Lower confidence threshold to match spaCy behavior (0.7 instead of 0.8)
+    locs = [e for e in entities if e['Type'] == 'LOCATION' and e['Score'] > 0.7]
+    orgs = [e for e in entities if e['Type'] == 'ORGANIZATION' and e['Score'] > 0.7]
+    
+    # ENHANCED: Award points for successful location extraction via any method
+    if locs or book.get('author_location_raw'): 
+        score += 10
+    
+    if orgs: 
+        score += 10
+    
+    if len(book.get('author_description', '')) > 100: 
+        score += 10
+    
+    if book.get('google_books_available') == "TRUE": 
+        score += 10
+    
+    if book.get('open_library_available') == "TRUE": 
+        score += 5
+    
+    if book.get('bisac_primary_code'): 
+        score += 5
+    
+    final_score = min(score, 100)
+    return final_score
 
 
 def count_populated(record):
@@ -569,22 +269,32 @@ def count_populated(record):
 def lambda_handler(event, context):
     isbn   = event.get('isbn')
     job_id = event.get('jobId', 'unknown-job')
-
     if not isbn:
         return {"error": "Missing ISBN"}
 
     # ── 1. Fetch sources ──────────────────────────────────────────────────────
     google_data   = fetch_google_books(isbn)
     open_lib_data = fetch_open_library(isbn)
-    biblio        = fetch_biblioshare(isbn)
+    
+    # Fetch and parse BiblioShare ONIX XML
+    biblio_xml = fetch_biblioshare(isbn)
+    if biblio_xml and not isinstance(biblio_xml, dict):
+        # Parse ONIX XML into dict
+        biblio = parse_onix(biblio_xml)
+        # Check for parse errors
+        if '_parse_error' in biblio:
+            print(f"ONIX parse error for {isbn}: {biblio['_parse_error']}")
+            biblio = {}
+    else:
+        biblio = {}
 
     # ── 2. ISBN-10 ────────────────────────────────────────────────────────────
     isbn_10 = biblio.get('isbn_10') or isbn13_to_isbn10(isbn)
 
-    # ── 3. Authors ────────────────────────────────────────────────────────────
+    # ── 3. Authors (WITH SEQUENCENUMBER SORTING from parse_onix) ─────────────
     b_contributors = [
         c['name'] for c in biblio.get('contributors', [])
-        if c.get('role') in ('A01', 'A12', 'A13', 'author', '')
+        if c.get('role') in ('A01', 'A12', 'A13', 'A02', 'author', '')
     ]
     g_authors        = google_data.get('authors', []) if google_data else []
     author_pool      = b_contributors or g_authors
@@ -593,13 +303,14 @@ def lambda_handler(event, context):
                         else g_authors[1] if len(g_authors) > 1 else "")
     all_authors      = "; ".join(dict.fromkeys(author_pool)) if author_pool else primary_author
 
-    # ── 4. Strip HTML from all text fields before any further use ─────────────
-    bio_clean   = strip_html(biblio.get('bio', ''))
-    short_clean = strip_html(biblio.get('short_description', '')) or strip_html(
+    # ── 4. Get text fields (already cleaned by onix_parser) ──────────────────
+    # Note: onix_parser.py already uses clean_html() on all HTML fields,
+    bio_clean   = biblio.get('bio', '')
+    short_clean = biblio.get('short_description', '') or clean_html(
                   google_data.get('description', '')[:300] if google_data else '')
-    long_clean  = strip_html(biblio.get('long_description', '')) or strip_html(
+    long_clean  = biblio.get('long_description', '') or clean_html(
                   google_data.get('description', '') if google_data else '')
-    toc_clean   = strip_html(biblio.get('table_of_contents', ''))
+    toc_clean   = biblio.get('table_of_contents', '')
 
     # ── 5. Bibliographic metadata ─────────────────────────────────────────────
     title           = biblio.get('title') or (google_data.get('title') if google_data else '') or 'Unknown'
@@ -666,7 +377,7 @@ def lambda_handler(event, context):
     gb_rating_count = google_data.get('ratingsCount')   if google_data else None
     reading_level   = "Adult" if google_data and google_data.get('maturityRating') == 'MATURE' else ""
 
-    # ── 12. Amazon Comprehend NLP (on clean text only) ────────────────────────
+    # ── 12. Amazon Comprehend NLP (adapted from biblioNomics spaCy approach) ──
     comprehend_entities   = []
     author_location_raw   = ""
     author_institution    = ""
@@ -676,15 +387,170 @@ def lambda_handler(event, context):
 
     if bio_clean:
         try:
-            bio_ents            = comprehend.detect_entities(Text=bio_clean[:4900], LanguageCode='en').get('Entities', [])
+            
+            # Get all entities from bio
+            bio_ents = comprehend.detect_entities(Text=bio_clean[:4900], LanguageCode='en').get('Entities', [])
             comprehend_entities = bio_ents
-            bio_locs  = [e['Text'] for e in bio_ents if e['Type'] == 'LOCATION'     and e['Score'] > 0.8]
-            bio_orgs  = [e['Text'] for e in bio_ents if e['Type'] == 'ORGANIZATION' and e['Score'] > 0.8]
-            bio_dates = [e['Text'] for e in bio_ents if e['Type'] == 'DATE'         and e['Score'] > 0.8]
+            
+            
+            # Extract entities by type with confidence > 0.8
+            bio_locs  = [(e['Text'], e['BeginOffset']) for e in bio_ents if e['Type'] == 'LOCATION' and e['Score'] > 0.8]
+            bio_orgs  = [(e['Text'], e['BeginOffset']) for e in bio_ents if e['Type'] == 'ORGANIZATION' and e['Score'] > 0.8]
+            bio_dates = [e['Text'] for e in bio_ents if e['Type'] == 'DATE' and e['Score'] > 0.8]
+            
+            
+            # ── LOCATION: Proximity-based scoring ────────────
+            # Score locations by proximity to location-signal verbs
+            if bio_locs:
+                def score_location_by_proximity(loc_text, loc_offset):
+                    """Score based on proximity to location signal verbs"""
+                    min_dist = float('inf')
+                    for verb in LOCATION_SIGNAL_VERBS:
+                        # Find position of signal verb in bio
+                        pos = bio_clean.lower().find(verb)
+                        if pos != -1:
+                            dist = abs(loc_offset - pos)
+                            min_dist = min(min_dist, dist)
+                            print(f"DEBUG NLP: Found signal verb '{verb}' at pos {pos}, distance to '{loc_text}' at {loc_offset}: {dist}")
+                    return min_dist
+                
+                # Sort by proximity score (lower = better)
+                scored_locs = [(loc, score_location_by_proximity(loc, offset)) for loc, offset in bio_locs]
+                scored_locs.sort(key=lambda x: x[1])
+                author_location_raw = scored_locs[0][0]
 
-            author_location_raw = bio_locs[0] if bio_locs else ""
-            author_institution  = resolve_institution(bio_clean, bio_orgs)
+            
+            # ── INSTITUTION: Context-aware extraction ─────────
+            # Look for ORGs linked to affiliation contexts
+            if not author_institution and bio_orgs:
+                # Try regex patterns first (founder of, works at, serves at, etc.)
+                for m in AFFILIATION_RE.finditer(bio_clean):
+                    candidate = m.group(1).strip().rstrip('.,;')
+                    if len(candidate) > 3:
+                        author_institution = candidate
+                        break
+                
+                # Fallback: use first ORG entity if no pattern match
+                if not author_institution:
+                    # Filter out media organizations
+                    for org, _ in bio_orgs:
+                        if org.lower() not in MEDIA_ORG_DENYLIST:
+                            author_institution = org
+                            break
+                
+                # Last resort: take first ORG even if it's media
+                if not author_institution and bio_orgs:
+                    author_institution = bio_orgs[0][0]
+            
+            # ── CITY-FROM-ORG fallback ────────────────────────
+            # If no location found but institution exists, try to extract city from org name
+            if not author_location_raw and author_institution:
+                tokens = author_institution.split()
+                for token in reversed(tokens):
+                    cleaned = token.strip("'s,.")
 
+                    if cleaned in CITY_TO_PROVINCE:
+                        author_location_raw = cleaned
+                        break
+            
+            # ── ADDITIONAL FALLBACK: Extract cities from ALL organization entities ──────
+            # Even if we didn't use the org as institution, check all orgs for city names
+            if not author_location_raw and bio_orgs:
+                for org_text, _ in bio_orgs:
+                    tokens = org_text.split()
+                    for token in reversed(tokens):
+                        cleaned = token.strip("'s,.")
+                        
+                        # Check Canadian cities
+                        if cleaned in CITY_TO_PROVINCE:
+                            author_location_raw = cleaned
+                            break
+                        
+                        # Check US cities (like biblioNomics does)
+                        us_cities = {
+                            "New York", "Los Angeles", "Chicago", "Houston", "Dallas",
+                            "Nashville", "Atlanta", "Boston", "San Francisco", "Seattle",
+                            "Portland", "Denver", "Miami", "Philadelphia", "Phoenix",
+                            "Detroit", "Minneapolis", "Austin", "Brooklyn", "Manhattan",
+                            "Washington"
+                        }
+                        if cleaned in us_cities:
+                            author_location_raw = cleaned
+                            print(f"DEBUG NLP: Found US city '{cleaned}' in org name!")
+                            break
+                    
+                    if author_location_raw:
+                        break
+            
+            # ── REGEX FALLBACK: Direct text search for common city names ────────────────
+            if not author_location_raw:
+                # Search for city names directly in the text
+                # Combine all city names for search
+                all_cities = list(CITY_TO_PROVINCE.keys()) + [
+                    "New York", "Los Angeles", "Chicago", "Houston", "Dallas",
+                    "Nashville", "Atlanta", "Boston", "San Francisco", "Seattle",
+                    "Portland", "Denver", "Miami", "Philadelphia", "Phoenix",
+                    "Detroit", "Minneapolis", "Austin", "Brooklyn", "Manhattan",
+                    "Washington"
+                ]
+                
+                for city in all_cities:
+                    # Look for city name as a word boundary
+                    pattern = r'\b' + re.escape(city) + r'\b'
+                    if re.search(pattern, bio_clean, re.IGNORECASE):
+                        author_location_raw = city
+                        break
+            
+            # ── PROFESSION: Key phrases + regex patterns ──────────────────────────
+            # Use Comprehend key phrases instead of spaCy dependency parsing
+            kp_resp = comprehend.detect_key_phrases(Text=bio_clean[:4900], LanguageCode='en')
+            prof_phrases = []
+            
+            # Extract key phrases containing profession keywords
+            for p in kp_resp.get('KeyPhrases', []):
+                if p['Score'] > 0.8 and any(kw in p['Text'].lower() for kw in PROFESSION_KEYWORDS):
+                    prof_phrases.append(p['Text'])
+            
+            # Also try regex patterns as fallback
+            if not prof_phrases:
+                patterns = [
+                    r"(?:is|was) an? (.+?)(?:\.|She |He |They |,)",
+                    r"award-winning (.+?)(?:\.|,|;| and | who )",
+                    r"(\w+(?:\s\w+)*) and author\b",
+                ]
+                for pattern in patterns:
+                    match = re.search(pattern, bio_clean, re.IGNORECASE)
+                    if match:
+                        prof_phrases.append(match.group(1).strip())
+                        break
+            
+            # Split compound professions and clean
+            if prof_phrases:
+                all_professions = []
+                for raw in prof_phrases:
+                    # Split on comma + optional conjunction, or standalone conjunction
+                    parts = re.split(r",\s*(?:and\s+)?|\s+and\s+", raw)
+                    for part in parts:
+                        part = part.strip()
+                        if part:
+                            # Remove modifier words
+                            words = part.split()
+                            filtered = [w for w in words if w.lower().strip('.,') not in PROFESSION_MODIFIERS]
+                            if filtered:
+                                all_professions.append(" ".join(filtered))
+                
+                # Deduplicate and join
+                seen = set()
+                unique = []
+                for p in all_professions:
+                    p_lower = p.lower()
+                    if p_lower not in seen and len(p) > 2:
+                        seen.add(p_lower)
+                        unique.append(p)
+                
+                author_profession_raw = ", ".join(unique[:3])  # Limit to 3 professions
+            
+            # ── TIME PERIODS ───────────────────────────────────────────────────────
             if bio_dates:
                 years = sorted(set(
                     m.group(0) for d in bio_dates
@@ -692,18 +558,10 @@ def lambda_handler(event, context):
                 ))
                 time_period_mentioned = f"{years[0]}–{years[-1]}" if len(years) > 1 else (years[0] if years else "")
 
-            kp_resp = comprehend.detect_key_phrases(Text=bio_clean[:4900], LanguageCode='en')
-            prof_phrases = [
-                p['Text'] for p in kp_resp.get('KeyPhrases', [])
-                if p['Score'] > 0.8
-                and any(kw in p['Text'].lower() for kw in PROFESSION_KEYWORDS)
-            ]
-            author_profession_raw = prof_phrases[0] if prof_phrases else ""
-
         except Exception as e:
             print(f"Comprehend (bio) Error: {e}")
 
-    # Locations across full text (bio + description combined)
+    # ── Locations across full text (bio + description combined) ───────────────
     combined = (bio_clean + " " + long_clean)[:4900]
     if combined.strip():
         try:
@@ -815,8 +673,9 @@ def lambda_handler(event, context):
     cs = calc_confidence(record, comprehend_entities)
     record['confidence_score']    = cs
     record['data_richness']       = 'Rich' if cs >= 75 else 'Moderate' if cs >= 50 else 'Basic'
-    record['verification_status'] = 'Verified' if cs >= 75 else 'Unverified'
+    # FIXED: Lower verification threshold to match biblioNomics (70 instead of 75)
+    record['verification_status'] = 'Verified' if cs >= 70 else 'Unverified'
     record['fields_populated']    = count_populated(record)
 
-    # ── 18. Return in canonical CSV spec order ────────────────────────────────
+    # ── 18. Return in canonical CSV spec order 
     return {k: record.get(k) for k in CSV_FIELD_NAMES}
