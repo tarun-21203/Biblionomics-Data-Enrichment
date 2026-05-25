@@ -182,6 +182,9 @@ Resources:
       CodeUri: lambdas/job_redo/
       Handler: job_redo.lambda_handler
       Role: !GetAtt LambdaExecutionRole.Arn
+      Environment:
+        Variables:
+          STATE_MACHINE_ARN: !Ref EnrichmentStateMachine  
       Events:
         PostJobsRedo:
           Type: HttpApi
@@ -363,15 +366,36 @@ Resources:
                       IntervalSeconds: 2
                       MaxAttempts: 3
                       BackoffRate: 2.0
+                  Catch:
+                    - ErrorEquals: ["States.ALL"]
+                      ResultPath: "$.error"
+                      Next: EnrichBookFailed
+                  End: true
+                EnrichBookFailed:
+                  Type: Pass
+                  Parameters:
+                    "isbn_13.$": "$.isbn"
+                    enrichment_status: "failed"
                   End: true
           AggregateResults:
             Type: Task
             Resource: !GetAtt ResultsAggregatorFunction.Arn
             ResultPath: "$.aggregationResult"
             Next: UpdateJobStatus
+            Catch:
+              - ErrorEquals: ["States.ALL"]
+                ResultPath: "$.error"
+                Next: MarkJobFailed
           UpdateJobStatus:
             Type: Task
             Resource: !GetAtt JobStatusUpdaterFunction.Arn
+            End: true
+          MarkJobFailed:
+            Type: Task
+            Resource: !GetAtt JobStatusUpdaterFunction.Arn
+            Parameters:
+              "jobId.$": "$.jobId"
+              status: "failed"
             End: true
 
   # ── Frontend Hosting ──────────────────────────────────────────────────────────

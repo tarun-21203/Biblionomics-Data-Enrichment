@@ -122,6 +122,7 @@ def lambda_handler(event, context):
     """
     job_id = event.get('jobId')
     results = event.get('enrichmentResults', [])
+    isbn_order = event.get('isbns', [])
 
     if not job_id or not results:
         raise ValueError("Missing jobId or enrichmentResults")
@@ -131,15 +132,19 @@ def lambda_handler(event, context):
     for row in results:
         all_fields_in_data.update(row.keys())
 
-
     # Use ALL fields from our predefined order (this ensures consistent CSV structure)
     ordered_headers = CSV_FIELD_ORDER.copy()
-    
+
     # Add any unexpected fields that aren't in our predefined order (as backup)
     for field in all_fields_in_data:
         if field not in ordered_headers:
             ordered_headers.append(field)
-    
+
+    # Sort results to match original input order if isbn_order is available
+    if isbn_order:
+        isbn_index = {isbn: i for i, isbn in enumerate(isbn_order)}
+        results = sorted(results, key=lambda r: isbn_index.get(r.get('isbn_13', ''), len(isbn_order)))
+
     # Clean the data to prevent CSV parsing issues
     cleaned_results = []
     for row in results:
@@ -147,21 +152,22 @@ def lambda_handler(event, context):
         for key, value in row.items():
             cleaned_row[key] = clean_csv_value(value)
         cleaned_results.append(cleaned_row)
-    
+
     # Create CSV in memory with proper quote handling
     csv_buffer = io.StringIO()
     writer = csv.DictWriter(
-        csv_buffer, 
+        csv_buffer,
         fieldnames=ordered_headers,
-        quoting=csv.QUOTE_ALL,  # Quote all fields to handle embedded quotes
-        escapechar='\\',        # Use backslash for escaping
-        doublequote=True        # Double quotes within quoted fields
+        restval="",             # Fill missing fields with empty string
+        quoting=csv.QUOTE_ALL,
+        escapechar='\\',
+        doublequote=True
     )
     writer.writeheader()
     writer.writerows(cleaned_results)
 
     # Upload to S3 Output Bucket
-    output_key = f"jobs/{job_id}/results.csv"
+    output_key = f"{job_id}_output.csv"
 
     s3.put_object(
         Bucket=OUTPUT_BUCKET,
