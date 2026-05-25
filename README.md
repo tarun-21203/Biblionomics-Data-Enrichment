@@ -6,7 +6,7 @@ The system is built on AWS serverless infrastructure. Every operation is handled
 
 # Deployment
 
-The backend is deployed using AWS SAM, which uses CloudFormation under the hood. All AWS resource definitions are in `backend/template.yaml`. The codebase is at https://github.com/tarun-21203/Biblionomics-Data-Enrichment.
+The backend is deployed using AWS SAM, which uses CloudFormation under the hood. All AWS resource definitions are in `backend/template.yaml`.
 
 ## Prerequisites
 
